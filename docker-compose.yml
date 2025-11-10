@@ -1,0 +1,152 @@
+version: '3.8'
+
+volumes:
+  postgres_data:
+  compreface_postgres_data:
+  storage_data:
+
+services:
+  # PostgreSQL for the API
+  postgres:
+    image: postgres:latest
+    container_name: faces_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-facesdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - faces_network
+
+  # CompreFace PostgreSQL (separate database for CompreFace)
+  compreface-postgres-db:
+    image: ${registry:-exadel/}compreface-postgres-db:${POSTGRES_VERSION:-1.2.0}
+    restart: always
+    container_name: "compreface-postgres-db"
+    environment:
+      - POSTGRES_USER=${postgres_username:-postgres}
+      - POSTGRES_PASSWORD=${postgres_password:-postgres}
+      - POSTGRES_DB=${postgres_db:-frs}
+    volumes:
+      - compreface_postgres_data:/var/lib/postgresql/data
+    networks:
+      - faces_network
+
+  # CompreFace API service
+  compreface-api:
+    restart: always
+    image: ${registry:-exadel/}compreface-api:${API_VERSION:-1.2.0}
+    container_name: "compreface-api"
+    depends_on:
+      - compreface-postgres-db
+    environment:
+      - POSTGRES_USER=${postgres_username:-postgres}
+      - POSTGRES_PASSWORD=${postgres_password:-postgres}
+      - POSTGRES_URL=jdbc:postgresql://${postgres_domain:-compreface-postgres-db}:${postgres_port:-5432}/${postgres_db:-frs}
+      - SPRING_PROFILES_ACTIVE=dev
+      - API_JAVA_OPTS=${compreface_api_java_options:--Xmx4g}
+      - SAVE_IMAGES_TO_DB=${save_images_to_db:-true}
+      - MAX_FILE_SIZE=${max_file_size:-5MB}
+      - MAX_REQUEST_SIZE=${max_request_size:-10M}B
+      - CONNECTION_TIMEOUT=${connection_timeout:-10000}
+      - READ_TIMEOUT=${read_timeout:-60000}
+    ports:
+      - "3000:3000"
+    networks:
+      - faces_network
+
+  # CompreFace Admin service
+  compreface-admin:
+    restart: always
+    image: ${registry:-exadel/}compreface-admin:${ADMIN_VERSION:-1.2.0}
+    container_name: "compreface-admin"
+    environment:
+      - POSTGRES_USER=${postgres_username:-postgres}
+      - POSTGRES_PASSWORD=${postgres_password:-postgres}
+      - POSTGRES_URL=jdbc:postgresql://${postgres_domain:-compreface-postgres-db}:${postgres_port:-5432}/${postgres_db:-frs}
+      - SPRING_PROFILES_ACTIVE=dev
+      - ENABLE_EMAIL_SERVER=${enable_email_server:-false}
+      - EMAIL_HOST=${email_host:-smtp.gmail.com}
+      - EMAIL_USERNAME=${email_username:-}
+      - EMAIL_FROM=${email_from:-}
+      - EMAIL_PASSWORD=${email_password:-}
+      - ADMIN_JAVA_OPTS=${compreface_admin_java_options:--Xmx1g}
+      - MAX_FILE_SIZE=${max_file_size:-5MB}
+      - MAX_REQUEST_SIZE=${max_request_size:-10M}B
+    depends_on:
+      - compreface-postgres-db
+      - compreface-api
+    networks:
+      - faces_network
+
+  # CompreFace Frontend (UI)
+  compreface-fe:
+    restart: always
+    image: ${registry:-exadel/}compreface-fe:${FE_VERSION:-1.2.0}
+    container_name: "compreface-ui"
+    ports:
+      - "8001:80"
+    depends_on:
+      - compreface-api
+      - compreface-admin
+    environment:
+      - CLIENT_MAX_BODY_SIZE=${max_request_size:-10M}
+      - PROXY_READ_TIMEOUT=${read_timeout:-60000}ms
+      - PROXY_CONNECT_TIMEOUT=${connection_timeout:-10000}ms
+    networks:
+      - faces_network
+
+  # CompreFace Core (ML service)
+  compreface-core:
+    restart: always
+    image: ${registry:-exadel/}compreface-core:${CORE_VERSION:-1.2.0}
+    container_name: "compreface-core"
+    environment:
+      - ML_PORT=3000
+      - IMG_LENGTH_LIMIT=${max_detect_size:-640}
+      - UWSGI_PROCESSES=${uwsgi_processes:-2}
+      - UWSGI_THREADS=${uwsgi_threads:-1}
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthcheck || exit 1
+      interval: 10s
+      retries: 0
+      start_period: 0s
+      timeout: 1s
+    networks:
+      - faces_network
+
+  # FastAPI Backend
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: faces_api
+    env_file:
+      - .env
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - storage_data:/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      compreface-postgres-db:
+        condition: service_started
+      compreface-api:
+        condition: service_started
+    networks:
+      - faces_network
+    command: uvicorn app.main:app --host ${BACKEND_HOST:-0.0.0.0} --port 8000
+
+networks:
+  faces_network:
+    driver: bridge
+
