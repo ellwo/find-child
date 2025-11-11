@@ -1,0 +1,84 @@
+{
+  "appName": "AI Mirror",
+  "nav": {
+    "dashboard": "Dashboard",
+    "cameras": "Cameras",
+    "savedImages": "Saved Images",
+    "search": "Search"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "welcome": "Welcome to AI Mirror",
+    "totalCameras": "Total Cameras",
+    "totalImages": "Total Images",
+    "recentActivity": "Recent Activity",
+    "activeCameras": "Active Cameras",
+    "todayImages": "Today's Images",
+    "viewAll": "View All",
+    "noActivity": "No recent activity"
+  },
+  "cameras": {
+    "title": "Cameras",
+    "noCameras": "No cameras registered",
+    "firstSeen": "First Seen",
+    "lastSeen": "Last Seen",
+    "totalImages": "Total Images",
+    "status": "Status",
+    "active": "Active",
+    "inactive": "Inactive"
+  },
+  "savedImages": {
+    "title": "Saved Images",
+    "noImages": "No saved images",
+    "filters": "Filters",
+    "startDate": "Start Date",
+    "endDate": "End Date",
+    "camera": "Camera",
+    "allCameras": "All Cameras",
+    "apply": "Apply",
+    "reset": "Reset",
+    "page": "Page",
+    "of": "of",
+    "similarity": "Similarity"
+  },
+  "search": {
+    "title": "Search by Image",
+    "subtitle": "Upload an image or capture a photo to find similar faces",
+    "uploadZone": "Drag and drop an image here or click to upload",
+    "orUseCamera": "Or use camera",
+    "openCamera": "Open Camera",
+    "capture": "Capture",
+    "retake": "Retake",
+    "searching": "Searching...",
+    "searchButton": "Search",
+    "results": "Results",
+    "noResults": "No results found",
+    "foundResults": "Found {{count}} results",
+    "similarity": "Similarity",
+    "threshold": "Similarity Threshold",
+    "timeRange": "Time Range",
+    "startDate": "Start Date",
+    "endDate": "End Date",
+    "advancedOptions": "Advanced Options"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Retry",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "search": "Search",
+    "filter": "Filter",
+    "export": "Export",
+    "import": "Import"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "toggle": "Toggle Theme"
+  }
+}

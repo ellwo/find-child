@@ -75,9 +75,9 @@ dmypy.json
 .pyre/
 
 # Project specific
-*.jpg
-*.jpeg
-*.png
+# *.jpg
+# *.jpeg
+# *.png
 !api/app/static/*.png
 !api/app/static/*.jpg
 
@@ -88,4 +88,4 @@ Thumbs.db
 # Logs
 *.log
 logs/
-
+# /aimirror-vision

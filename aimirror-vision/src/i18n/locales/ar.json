@@ -1,0 +1,84 @@
+{
+  "appName": "المرايا الذكية",
+  "nav": {
+    "dashboard": "لوحة التحكم",
+    "cameras": "الكاميرات",
+    "savedImages": "الصور المحفوظة",
+    "search": "البحث"
+  },
+  "dashboard": {
+    "title": "لوحة التحكم",
+    "welcome": "مرحباً بك في المرايا الذكية",
+    "totalCameras": "إجمالي الكاميرات",
+    "totalImages": "إجمالي الصور",
+    "recentActivity": "النشاط الأخير",
+    "activeCameras": "الكاميرات النشطة",
+    "todayImages": "صور اليوم",
+    "viewAll": "عرض الكل",
+    "noActivity": "لا يوجد نشاط حديث"
+  },
+  "cameras": {
+    "title": "الكاميرات",
+    "noCameras": "لا توجد كاميرات مسجلة",
+    "firstSeen": "أول ظهور",
+    "lastSeen": "آخر ظهور",
+    "totalImages": "إجمالي الصور",
+    "status": "الحالة",
+    "active": "نشط",
+    "inactive": "غير نشط"
+  },
+  "savedImages": {
+    "title": "الصور المحفوظة",
+    "noImages": "لا توجد صور محفوظة",
+    "filters": "التصفية",
+    "startDate": "تاريخ البداية",
+    "endDate": "تاريخ النهاية",
+    "camera": "الكاميرا",
+    "allCameras": "كل الكاميرات",
+    "apply": "تطبيق",
+    "reset": "إعادة تعيين",
+    "page": "صفحة",
+    "of": "من",
+    "similarity": "التشابه"
+  },
+  "search": {
+    "title": "البحث بالصورة",
+    "subtitle": "ارفع صورة أو التقط صورة للبحث عن وجوه مشابهة",
+    "uploadZone": "اسحب وأفلت الصورة هنا أو انقر للتحميل",
+    "orUseCamera": "أو استخدم الكاميرا",
+    "openCamera": "فتح الكاميرا",
+    "capture": "التقاط",
+    "retake": "إعادة التقاط",
+    "searching": "جاري البحث...",
+    "searchButton": "بحث",
+    "results": "النتائج",
+    "noResults": "لم يتم العثور على نتائج",
+    "foundResults": "تم العثور على {{count}} نتيجة",
+    "similarity": "التشابه",
+    "threshold": "حد التشابه",
+    "timeRange": "النطاق الزمني",
+    "startDate": "تاريخ البداية",
+    "endDate": "تاريخ النهاية",
+    "advancedOptions": "خيارات متقدمة"
+  },
+  "common": {
+    "loading": "جاري التحميل...",
+    "error": "حدث خطأ",
+    "retry": "إعادة المحاولة",
+    "close": "إغلاق",
+    "cancel": "إلغاء",
+    "confirm": "تأكيد",
+    "save": "حفظ",
+    "delete": "حذف",
+    "edit": "تعديل",
+    "search": "بحث",
+    "filter": "تصفية",
+    "export": "تصدير",
+    "import": "استيراد"
+  },
+  "theme": {
+    "light": "فاتح",
+    "dark": "داكن",
+    "toggle": "تبديل السمة"
+  }
+}

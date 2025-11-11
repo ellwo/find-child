@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  # Production service
+  prod:
+    build:
+      context: .
+    ports:
+      - "8202:80"
+    environment:
+      - NODE_ENV=production
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge 

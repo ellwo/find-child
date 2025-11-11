@@ -9,6 +9,7 @@ from typing import Optional, List
 from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -30,6 +31,20 @@ app = FastAPI(
     title="Face Recognition API",
     description="API for ESP32-CAM face uploads, CompreFace integration, and image search",
     version="1.0.0"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Mount static files for serving images
@@ -66,7 +81,8 @@ async def health_check(db: Session = Depends(get_db)):
     
     # Check database
     try:
-        db.execute("SELECT 1")
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
         health_status["database"] = "connected"
     except Exception as e:
         health_status["database"] = f"error: {str(e)}"
