@@ -142,6 +142,12 @@ services:
         condition: service_started
     networks:
       - faces_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     command: uvicorn app.main:app --host ${BACKEND_HOST:-0.0.0.0} --port 8000
 
   web:
@@ -154,9 +160,11 @@ services:
     ports:
       - "${WEB_PORT:-8002}:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - faces_network
+    restart: unless-stopped
 
 networks:
   faces_network:

@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status
+from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status, WebSocket
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,10 +20,15 @@ from app.utils import (
     save_face_image, get_image_url, parse_date, get_today_utc,
     parse_iso_datetime, get_storage_path
 )
+from app import auth
+from app.dependencies import get_current_user, require_admin, require_parent
+from app.routers import admin, parent
+from app.services import gps_service, face_recognition
+from app.websocket import websocket_admin_buses, websocket_parent_student, websocket_device_gps, manager
 
 load_dotenv()
 
-# Initialize database tables
+# Initialize database tables (init_data.py will be called from Dockerfile)
 models.Base.metadata.create_all(bind=engine)
 
 # Create FastAPI app
@@ -55,8 +60,13 @@ faces_dir.mkdir(parents=True, exist_ok=True)
 # Mount static file serving
 app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
+# Include routers
+app.include_router(admin.router)
+app.include_router(parent.router)
+
 # Get API key from environment
 CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "changeme_camera_api_key")
+GPS_DEVICE_API_KEY = os.getenv("GPS_DEVICE_API_KEY", "changeme_gps_api_key")
 
 
 def verify_api_key(x_api_key: str = Header(...)) -> bool:
@@ -65,6 +75,16 @@ def verify_api_key(x_api_key: str = Header(...)) -> bool:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key"
+        )
+    return True
+
+
+def verify_gps_api_key(x_api_key: str = Header(...)) -> bool:
+    """Verify API key for GPS device updates."""
+    if x_api_key != GPS_DEVICE_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid GPS device API key"
         )
     return True
 
@@ -114,6 +134,46 @@ async def health_check(db: Session = Depends(get_db)):
         pass
     
     return health_status
+
+
+# Authentication Endpoints
+@app.post("/api/auth/login", response_model=schemas.Token)
+async def login(login_data: schemas.LoginRequest, db: Session = Depends(get_db)):
+    """Login endpoint - accepts username, email, or phone."""
+    user = auth.authenticate_user(
+        db,
+        username=login_data.username,
+        email=login_data.email,
+        phone=login_data.phone,
+        password=login_data.password
+    )
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username/email/phone or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = auth.create_access_token(
+        data={"sub": user.id, "username": user.username}
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/api/auth/me", response_model=schemas.UserResponse)
+async def get_current_user_info(current_user: models.User = Depends(get_current_user)):
+    """Get current user information."""
+    return current_user
+
+
+@app.post("/api/auth/refresh", response_model=schemas.Token)
+async def refresh_token(current_user: models.User = Depends(get_current_user)):
+    """Refresh access token."""
+    access_token = auth.create_access_token(
+        data={"sub": current_user.id, "username": current_user.username}
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @app.post("/api/upload_camera_face", response_model=schemas.UploadResponse)
@@ -190,6 +250,63 @@ async def upload_camera_face(
     except Exception as e:
         # Log error but don't fail the upload - image is saved
         print(f"Warning: Failed to index face in CompreFace: {str(e)}")
+    
+    # Try to identify student and record attendance
+    try:
+        # Get bus associated with camera
+        bus = None
+        if camera.bus:
+            bus = camera.bus
+        else:
+            bus = db.query(models.Bus).filter(models.Bus.camera_id == camera_id).first()
+        
+        if bus:
+            # Get GPS location from tracker
+            gps_latitude = None
+            gps_longitude = None
+            if bus.gps_tracker_id:
+                tracker = crud.get_gps_tracker_by_id(db, bus.gps_tracker_id)
+                if tracker:
+                    gps_latitude = tracker.last_latitude
+                    gps_longitude = tracker.last_longitude
+            
+            # Identify student from face
+            result = face_recognition.identify_student_from_face(
+                db, camera_id, file_path, gender_detected=None
+            )
+            
+            if result:
+                student, similarity = result
+                # Record attendance
+                attendance = face_recognition.record_attendance(
+                    db=db,
+                    student_id=student.id,
+                    bus_id=bus.id,
+                    detected_image_path=file_path,
+                    similarity_score=similarity,
+                    detected_at=parsed_timestamp,
+                    gps_latitude=gps_latitude,
+                    gps_longitude=gps_longitude,
+                    gender_detected=None
+                )
+                
+                # Broadcast attendance update via WebSocket
+                if attendance:
+                    try:
+                        await manager.broadcast_attendance(student.id, {
+                            "attendance_id": attendance.id,
+                            "detected_at": attendance.detected_at.isoformat(),
+                            "similarity_score": attendance.similarity_score,
+                            "gps_location": {
+                                "latitude": attendance.gps_latitude,
+                                "longitude": attendance.gps_longitude
+                            }
+                        })
+                    except Exception as e:
+                        print(f"Warning: Failed to broadcast attendance: {str(e)}")
+    except Exception as e:
+        # Log error but don't fail the upload
+        print(f"Warning: Failed to identify student or record attendance: {str(e)}")
     
     image_url = get_image_url(file_path)
     
@@ -458,6 +575,98 @@ async def get_cameras(db: Session = Depends(get_db)):
         )
         for cam in cameras
     ]
+
+
+# GPS Device Endpoints
+@app.post("/api/device/gps/update")
+async def update_gps_location(
+    gps_data: schemas.GPSUpdateRequest,
+    x_api_key: str = Header(..., alias="X-API-KEY"),
+    db: Session = Depends(get_db)
+):
+    """Update GPS location from GPS tracker device."""
+    # Verify API key
+    verify_gps_api_key(x_api_key)
+    
+    # Get or create tracker
+    tracker = crud.get_gps_tracker_by_device_id(db, gps_data.device_id)
+    if not tracker:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"GPS tracker with device_id {gps_data.device_id} not found"
+        )
+    
+    # Update tracker location
+    timestamp = gps_data.timestamp or datetime.utcnow()
+    crud.update_gps_tracker_location(
+        db, gps_data.device_id, gps_data.latitude, gps_data.longitude, timestamp
+    )
+    
+    # Get bus associated with tracker
+    bus = db.query(models.Bus).filter(models.Bus.gps_tracker_id == tracker.id).first()
+    
+    # Get system settings to check if near school
+    settings = crud.get_system_settings(db)
+    is_near = False
+    if settings and settings.school_latitude and settings.school_longitude:
+        is_near = gps_service.is_near_school(
+            gps_data.latitude,
+            gps_data.longitude,
+            settings.school_latitude,
+            settings.school_longitude
+        )
+    
+    # Create GPS log entry
+    crud.create_gps_log(
+        db=db,
+        tracker_id=tracker.id,
+        latitude=gps_data.latitude,
+        longitude=gps_data.longitude,
+        timestamp=timestamp,
+        bus_id=bus.id if bus else None,
+        is_near_school=is_near
+    )
+    
+    # Broadcast location update via WebSocket
+    if bus:
+        try:
+            await manager.broadcast_bus_location(bus.id, gps_data.latitude, gps_data.longitude, timestamp)
+            # Broadcast to parents of students on this bus
+            students = crud.get_students_by_bus(db, bus.id)
+            for student in students:
+                await manager.broadcast_student_location(
+                    student.id, bus.id, gps_data.latitude, gps_data.longitude, timestamp
+                )
+        except Exception as e:
+            print(f"Warning: Failed to broadcast GPS update: {str(e)}")
+    
+    return {
+        "status": "success",
+        "device_id": gps_data.device_id,
+        "latitude": gps_data.latitude,
+        "longitude": gps_data.longitude,
+        "timestamp": timestamp,
+        "is_near_school": is_near
+    }
+
+
+# WebSocket Endpoints
+@app.websocket("/ws/admin/buses")
+async def ws_admin_buses(websocket: WebSocket):
+    """WebSocket endpoint for admin to track all buses."""
+    await websocket_admin_buses(websocket)
+
+
+@app.websocket("/ws/parent/{student_id}")
+async def ws_parent_student(websocket: WebSocket, student_id: int):
+    """WebSocket endpoint for parent to track a specific student's bus."""
+    await websocket_parent_student(websocket, student_id)
+
+
+@app.websocket("/ws/device/gps/{tracker_id}")
+async def ws_device_gps(websocket: WebSocket, tracker_id: str):
+    """WebSocket endpoint for GPS device to send location updates."""
+    await websocket_device_gps(websocket, tracker_id)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,345 @@
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  getMyStudent,
+  getLastAttendance,
+  getAttendanceHistory,
+  getBusLocation,
+  getRouteHistory,
+} from '@/lib/api';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ArrowLeft, MapPin, Clock, UserCheck, Bus, Phone } from 'lucide-react';
+import { format } from 'date-fns';
+import GoogleMapComponent from '@/components/GoogleMap';
+
+const ParentStudentTracking: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { isParent } = useAuth();
+  const studentId = parseInt(id || '0');
+
+  const [busLocation, setBusLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [routeHistory, setRouteHistory] = useState<any[]>([]);
+
+  const { data: student, isLoading: studentLoading } = useQuery({
+    queryKey: ['student', studentId],
+    queryFn: () => getMyStudent(studentId),
+    enabled: !!studentId && isParent,
+  });
+
+  const { data: lastAttendance } = useQuery({
+    queryKey: ['last-attendance', studentId],
+    queryFn: () => getLastAttendance(studentId),
+    enabled: !!studentId && isParent,
+  });
+
+  const { data: attendanceHistory } = useQuery({
+    queryKey: ['attendance-history', studentId],
+    queryFn: () => getAttendanceHistory(studentId),
+    enabled: !!studentId && isParent,
+  });
+
+  const { data: busLocationData, refetch: refetchBusLocation } = useQuery({
+    queryKey: ['bus-location', studentId],
+    queryFn: () => getBusLocation(studentId),
+    enabled: !!studentId && isParent && !!student?.bus_id,
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  useEffect(() => {
+    if (busLocationData?.location?.latitude && busLocationData?.location?.longitude) {
+      setBusLocation({
+        lat: busLocationData.location.latitude,
+        lng: busLocationData.location.longitude,
+      });
+    }
+  }, [busLocationData]);
+
+  useEffect(() => {
+    if (studentId && student?.bus_id) {
+      const today = new Date();
+      const startTime = new Date(today.setHours(0, 0, 0, 0));
+      const endTime = new Date();
+
+      getRouteHistory(studentId, {
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+      }).then((data) => {
+        if (data.route_points) {
+          setRouteHistory(data.route_points);
+        }
+      });
+    }
+  }, [studentId, student?.bus_id]);
+
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    if (!studentId || !busLocationData?.is_active_time) return;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/parent/${studentId}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'student_bus_location') {
+          setBusLocation({
+            lat: data.latitude,
+            lng: data.longitude,
+          });
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [studentId, busLocationData?.is_active_time]);
+
+  if (!isParent) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground">ليس لديك صلاحية للوصول إلى هذه الصفحة</p>
+      </div>
+    );
+  }
+
+  if (studentLoading) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground">جاري التحميل...</p>
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground">الطالب غير موجود</p>
+        <Button onClick={() => navigate('/parent/dashboard')} className="mt-4">
+          العودة
+        </Button>
+      </div>
+    );
+  }
+
+  const mapCenter = busLocation || (student.home_latitude && student.home_longitude
+    ? { lat: student.home_latitude, lng: student.home_longitude }
+    : { lat: 24.7136, lng: 46.6753 });
+
+  const markers = [];
+  if (busLocation) {
+    markers.push({
+      lat: busLocation.lat,
+      lng: busLocation.lng,
+      label: 'الحافلة',
+      info: `الحافلة: ${student.bus?.bus_number || ''}`,
+    });
+  }
+  if (student.home_latitude && student.home_longitude) {
+    markers.push({
+      lat: student.home_latitude,
+      lng: student.home_longitude,
+      label: 'المنزل',
+      info: 'منزل الطالب',
+    });
+  }
+
+  const routePoints = routeHistory.map((point) => ({
+    lat: point.latitude,
+    lng: point.longitude,
+  }));
+
+  return (
+    <div className="space-y-6 animate-slide-up">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" onClick={() => navigate('/parent/dashboard')}>
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          العودة
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold">{student.name}</h1>
+          <p className="text-muted-foreground mt-2">متابعة النشاط والموقع</p>
+        </div>
+      </div>
+
+      <Tabs defaultValue="location" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="location">الموقع</TabsTrigger>
+          <TabsTrigger value="attendance">الحضور</TabsTrigger>
+          <TabsTrigger value="history">السجل</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="location" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>موقع الحافلة</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {student.bus ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">رقم الحافلة</p>
+                      <p className="font-semibold">{student.bus.bus_number}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">اسم السائق</p>
+                      <p className="font-semibold">{student.bus.driver_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">رقم هاتف السائق</p>
+                      <p className="font-semibold">{student.bus.driver_phone}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">حالة التتبع</p>
+                      <Badge variant={busLocationData?.tracker_active ? 'default' : 'secondary'}>
+                        {busLocationData?.tracker_active ? 'نشط' : 'غير نشط'}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {busLocationData?.is_active_time && (
+                    <div className="mt-4">
+                      <Badge variant="default" className="mb-2">
+                        وقت نشط - التتبع اللحظي متاح
+                      </Badge>
+                    </div>
+                  )}
+
+                  {busLocation && (
+                    <div className="border rounded-lg overflow-hidden">
+                      <GoogleMapComponent
+                        center={mapCenter}
+                        zoom={15}
+                        markers={markers}
+                        route={routePoints.length > 1 ? routePoints : undefined}
+                        height="400px"
+                      />
+                    </div>
+                  )}
+
+                  {!busLocation && (
+                    <div className="text-center py-8 text-muted-foreground">
+                      لا يوجد موقع متاح للحافلة حالياً
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  الطالب غير مرتبط بحافلة
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="attendance" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>آخر حضور</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {lastAttendance ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">وقت الحضور</p>
+                      <p className="font-semibold">
+                        {format(new Date(lastAttendance.detected_at), 'PPp', { locale: ar })}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">نسبة التطابق</p>
+                      <p className="font-semibold">
+                        {(lastAttendance.similarity_score * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    {lastAttendance.gps_latitude && lastAttendance.gps_longitude && (
+                      <div className="col-span-2">
+                        <p className="text-sm text-muted-foreground mb-2">موقع الحضور</p>
+                        <div className="border rounded-lg overflow-hidden">
+                          <GoogleMapComponent
+                            center={{
+                              lat: lastAttendance.gps_latitude,
+                              lng: lastAttendance.gps_longitude,
+                            }}
+                            zoom={15}
+                            markers={[
+                              {
+                                lat: lastAttendance.gps_latitude,
+                                lng: lastAttendance.gps_longitude,
+                                label: 'موقع الحضور',
+                              },
+                            ]}
+                            height="200px"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  لا يوجد سجل حضور
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>سجل الحضور</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {attendanceHistory?.items?.length > 0 ? (
+                <div className="space-y-4">
+                  {attendanceHistory.items.map((attendance: any) => (
+                    <div key={attendance.id} className="border rounded-lg p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <UserCheck className="w-5 h-5 text-primary" />
+                          <div>
+                            <p className="font-semibold">
+                              {format(new Date(attendance.detected_at), 'PPp', { locale: ar })}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              نسبة التطابق: {(attendance.similarity_score * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                        </div>
+                        {attendance.gps_latitude && attendance.gps_longitude && (
+                          <Badge variant="outline">
+                            <MapPin className="w-3 h-3 mr-1" />
+                            موقع متاح
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  لا يوجد سجل حضور
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+};
+
+export default ParentStudentTracking;
+
