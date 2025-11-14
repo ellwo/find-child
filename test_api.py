@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = "https://ai-mirrors.socialaipilot.com/" #os.getenv("API_BASE_URL", "https://ai-mirrors.socialaipilot.com")
 CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "changeme_camera_api_key")
 
 # Test images directory
@@ -142,31 +142,31 @@ def main():
         return
     
     # Test images to upload
-    # test_images = [
-    #     ("tests-images/2.png", "test_cam_01", "Test Camera 01"),
-    #     ("tests-images/3.png", "test_cam_02", "Test Camera 02"),
-    # ]
+    test_images = [
+        ("tests-images/2.png", "test_cam_01", "Test Camera 01"),
+        ("tests-images/3.png", "test_cam_02", "Test Camera 02"),
+    ]
     
-    # print("\n" + "=" * 60)
-    # print("📤 STEP 1: Uploading test images (simulating ESP32-CAM)")
-    # print("=" * 60)
+    print("\n" + "=" * 60)
+    print("📤 STEP 1: Uploading test images (simulating ESP32-CAM)")
+    print("=" * 60)
     
-    # uploaded_images = []
-    # for image_rel_path, camera_id, camera_name in test_images:
-    #     image_path = Path(__file__).parent / image_rel_path
-    #     if not image_path.exists():
-    #         print(f"⚠️  Image not found: {image_path}")
-    #         continue
+    uploaded_images = []
+    for image_rel_path, camera_id, camera_name in test_images:
+        image_path = Path(__file__).parent / image_rel_path
+        if not image_path.exists():
+            print(f"⚠️  Image not found: {image_path}")
+            continue
         
-    #     result = upload_image(image_path, camera_id, camera_name)
-    #     if result:
-    #         uploaded_images.append(result)
+        result = upload_image(image_path, camera_id, camera_name)
+        if result:
+            uploaded_images.append(result)
     
-    # if not uploaded_images:
-    #     print("\n❌ No images were uploaded successfully. Cannot proceed with search test.")
-    #     return
+    if not uploaded_images:
+        print("\n❌ No images were uploaded successfully. Cannot proceed with search test.")
+        return
     
-    # print(f"\n✅ Successfully uploaded {len(uploaded_images)} image(s)")
+    print(f"\n✅ Successfully uploaded {len(uploaded_images)} image(s)")
     
     # Wait a bit for CompreFace to process
     print("\n⏳ Waiting 3 seconds for CompreFace to process images...")

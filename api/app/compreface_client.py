@@ -12,7 +12,10 @@ from compreface.service import RecognitionService, VerificationService
 load_dotenv()
 
 COMPREFACE_URL = os.getenv("COMPREFACE_URL", "http://compreface-api:3000")
-COMPREFACE_API_KEY = os.getenv("COMPREFACE_API_KEY", "")
+# Separate API keys for different services
+COMPREFACE_VERIFICATION_KEY = os.getenv("COMPREFACE_VERIFICATION_KEY", "")
+COMPREFACE_RECOGNITION_KEY = os.getenv("COMPREFACE_RECOGNITION_KEY", "")
+COMPREFACE_DETECTION_KEY = os.getenv("COMPREFACE_DETECTION_KEY", "")
 COMPREFACE_SUBJECT = os.getenv("COMPREFACE_SUBJECT", "faces")
 
 # Initialize CompreFace SDK
@@ -26,6 +29,7 @@ compreface_port = str(parsed_url.port) if parsed_url.port else ("443" if parsed_
 _compreface_instance = None
 _recognition_service = None
 _verification_service = None
+_detection_service = None
 
 
 def _get_compreface_instance():
@@ -40,10 +44,10 @@ def _get_recognition_service():
     """Get or create recognition service."""
     global _recognition_service
     if _recognition_service is None:
-        if not COMPREFACE_API_KEY:
-            raise ValueError("COMPREFACE_API_KEY not configured")
+        if not COMPREFACE_RECOGNITION_KEY:
+            raise ValueError("COMPREFACE_RECOGNITION_KEY not configured")
         compreface = _get_compreface_instance()
-        _recognition_service = compreface.init_face_recognition(COMPREFACE_API_KEY)
+        _recognition_service = compreface.init_face_recognition(COMPREFACE_RECOGNITION_KEY)
     return _recognition_service
 
 
@@ -51,11 +55,22 @@ def _get_verification_service():
     """Get or create verification service."""
     global _verification_service
     if _verification_service is None:
-        if not COMPREFACE_API_KEY:
-            raise ValueError("COMPREFACE_API_KEY not configured")
+        if not COMPREFACE_VERIFICATION_KEY:
+            raise ValueError("COMPREFACE_VERIFICATION_KEY not configured")
         compreface = _get_compreface_instance()
-        _verification_service = compreface.init_face_verification(COMPREFACE_API_KEY)
+        _verification_service = compreface.init_face_verification(COMPREFACE_VERIFICATION_KEY)
     return _verification_service
+
+
+def _get_detection_service():
+    """Get or create detection service."""
+    global _detection_service
+    if _detection_service is None:
+        if not COMPREFACE_DETECTION_KEY:
+            raise ValueError("COMPREFACE_DETECTION_KEY not configured")
+        compreface = _get_compreface_instance()
+        _detection_service = compreface.init_face_detection(COMPREFACE_DETECTION_KEY)
+    return _detection_service
 
 
 def index_face(file_path: str, retries: int = 3) -> str:
