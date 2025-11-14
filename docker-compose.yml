@@ -8,7 +8,7 @@ volumes:
 services:
   # PostgreSQL for the API
   postgres:
-    image: postgres:latest
+    image: postgres:17
     container_name: faces_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
