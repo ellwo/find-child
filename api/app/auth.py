@@ -5,13 +5,13 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app import models, schemas
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing - use bcrypt directly
+BCRYPT_ROUNDS = 12
 
 # JWT Configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
@@ -21,17 +21,46 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    # Ensure password is a string
+    if not isinstance(plain_password, str):
+        plain_password = str(plain_password)
+    
+    # Truncate to 72 bytes (bcrypt limit)
+    password_bytes = plain_password.encode('utf-8')
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    
+    # Verify password
+    try:
+        return bcrypt.checkpw(password_bytes, hashed_password.encode('utf-8'))
+    except Exception:
+        return False
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    return pwd_context.hash(password)
+    # Ensure password is a string
+    if not isinstance(password, str):
+        password = str(password)
+    
+    # Truncate password to 72 bytes (bcrypt limit) BEFORE hashing
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        # Truncate to exactly 72 bytes
+        password_bytes = password_bytes[:72]
+    
+    # Generate salt and hash
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
+    # Convert user_id to string for 'sub' claim (JWT standard)
+    if "sub" in to_encode and isinstance(to_encode["sub"], int):
+        to_encode["sub"] = str(to_encode["sub"])
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
@@ -45,9 +74,15 @@ def decode_access_token(token: str) -> Optional[schemas.TokenData]:
     """Decode and validate a JWT token."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("sub")
+        # 'sub' is stored as string in JWT, convert back to int
+        user_id_str = payload.get("sub")
         username: str = payload.get("username")
-        if user_id is None:
+        if user_id_str is None:
+            return None
+        # Convert string back to int
+        try:
+            user_id = int(user_id_str)
+        except (ValueError, TypeError):
             return None
         return schemas.TokenData(user_id=user_id, username=username)
     except JWTError:

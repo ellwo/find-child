@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getStudents, createStudent, updateStudent, deleteStudent, getBuses, getParents } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -21,11 +23,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { toast } from '@/hooks/use-toast';
-import { GraduationCap, Plus, Edit, Trash2, Loader2, Upload } from 'lucide-react';
+import { GraduationCap, Plus, Edit, Trash2, Loader2, Upload, MapPin } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import GoogleMapComponent from '@/components/GoogleMap';
 
 const AdminStudents: React.FC = () => {
+  const navigate = useNavigate();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<any>(null);
   const [faceImage, setFaceImage] = useState<File | null>(null);
@@ -34,7 +37,7 @@ const AdminStudents: React.FC = () => {
     age: '',
     gender: 'male',
     parent_id: '',
-    bus_id: '',
+    bus_id: 'none',
     home_address: '',
     home_latitude: '',
     home_longitude: '',
@@ -115,7 +118,7 @@ const AdminStudents: React.FC = () => {
       age: '',
       gender: 'male',
       parent_id: '',
-      bus_id: '',
+      bus_id: 'none',
       home_address: '',
       home_latitude: '',
       home_longitude: '',
@@ -130,7 +133,7 @@ const AdminStudents: React.FC = () => {
       age: student.age.toString(),
       gender: student.gender,
       parent_id: student.parent_id?.toString() || '',
-      bus_id: student.bus_id?.toString() || '',
+      bus_id: student.bus_id?.toString() || 'none',
       home_address: student.home_address || '',
       home_latitude: student.home_latitude?.toString() || '',
       home_longitude: student.home_longitude?.toString() || '',
@@ -154,12 +157,23 @@ const AdminStudents: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validate required fields
+    if (!formData.parent_id) {
+      toast({
+        title: 'خطأ',
+        description: 'يجب اختيار ولي الأمر',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
     const studentData: any = {
       name: formData.name,
       age: parseInt(formData.age),
       gender: formData.gender,
       parent_id: parseInt(formData.parent_id),
-      bus_id: formData.bus_id ? parseInt(formData.bus_id) : null,
+      bus_id: formData.bus_id && formData.bus_id !== 'none' ? parseInt(formData.bus_id) : null,
       home_address: formData.home_address || null,
       home_latitude: formData.home_latitude ? parseFloat(formData.home_latitude) : null,
       home_longitude: formData.home_longitude ? parseFloat(formData.home_longitude) : null,
@@ -189,6 +203,9 @@ const AdminStudents: React.FC = () => {
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingStudent ? 'تعديل طالب' : 'إضافة طالب جديد'}</DialogTitle>
+              <DialogDescription>
+                {editingStudent ? 'قم بتعديل معلومات الطالب' : 'أدخل معلومات الطالب الجديد'}
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -225,10 +242,11 @@ const AdminStudents: React.FC = () => {
                   </Select>
                 </div>
                 <div>
-                  <Label>ولي الأمر</Label>
+                  <Label>ولي الأمر *</Label>
                   <Select
-                    value={formData.parent_id}
+                    value={formData.parent_id || undefined}
                     onValueChange={(value) => setFormData({ ...formData, parent_id: value })}
+                    required
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="اختر ولي الأمر" />
@@ -245,14 +263,14 @@ const AdminStudents: React.FC = () => {
                 <div>
                   <Label>الحافلة</Label>
                   <Select
-                    value={formData.bus_id}
+                    value={formData.bus_id || 'none'}
                     onValueChange={(value) => setFormData({ ...formData, bus_id: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="اختر الحافلة" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">لا يوجد</SelectItem>
+                      <SelectItem value="none">لا يوجد</SelectItem>
                       {buses?.map((bus: any) => (
                         <SelectItem key={bus.id} value={bus.id.toString()}>
                           {bus.bus_number}
@@ -355,6 +373,7 @@ const AdminStudents: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>الصورة</TableHead>
                   <TableHead>الاسم</TableHead>
                   <TableHead>العمر</TableHead>
                   <TableHead>النوع</TableHead>
@@ -366,6 +385,19 @@ const AdminStudents: React.FC = () => {
               <TableBody>
                 {students?.map((student: any) => (
                   <TableRow key={student.id}>
+                    <TableCell>
+                      {student.image_url ? (
+                        <img 
+                          src={student.image_url} 
+                          alt={student.name}
+                          className="w-12 h-12 object-cover rounded-full border"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                          <GraduationCap className="w-6 h-6 text-muted-foreground" />
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell>{student.name}</TableCell>
                     <TableCell>{student.age}</TableCell>
                     <TableCell>{student.gender === 'male' ? 'ذكر' : 'أنثى'}</TableCell>
@@ -373,7 +405,15 @@ const AdminStudents: React.FC = () => {
                     <TableCell>{student.bus?.bus_number || '-'}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => handleEdit(student)}>
+                        <Button 
+                          size="sm" 
+                          variant="default" 
+                          onClick={() => navigate(`/admin/students/${student.id}/tracking`)}
+                          title="تتبع الطالب"
+                        >
+                          <MapPin className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleEdit(student)} title="تعديل">
                           <Edit className="w-4 h-4" />
                         </Button>
                         <Button
@@ -384,6 +424,7 @@ const AdminStudents: React.FC = () => {
                               deleteMutation.mutate(student.id);
                             }
                           }}
+                          title="حذف"
                         >
                           <Trash2 className="w-4 h-4" />
                         </Button>

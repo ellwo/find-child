@@ -34,6 +34,8 @@ class SystemSettings(Base):
     default_afternoon_start = Column(String, nullable=True)
     default_afternoon_end = Column(String, nullable=True)
     attendance_interval_minutes = Column(Integer, default=5, nullable=False)  # فارق التحضير
+    attendance_similarity_threshold = Column(Float, default=0.9, nullable=False)  # نسبة التشابه المطلوبة (90%)
+    max_daily_attendances = Column(Integer, default=2, nullable=False)  # عدد التحضيرات المسموح في اليوم
     websocket_enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

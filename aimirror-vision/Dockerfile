@@ -3,18 +3,27 @@ FROM node:20-alpine as builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install pnpm
+RUN npm install -g pnpm@9.14.2
+
+# Copy package files first for better caching
+COPY package.json ./
+COPY pnpm-lock.yaml* package-lock.json* ./
 
 # Install dependencies
-RUN npm install -g pnpm@9.14.2
+RUN pnpm install
+
+# Set build-time environment variables
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+ARG VITE_GOOGLE_MAPS_API_KEY
+ENV VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY}
+
 # Copy source code
 COPY . .
 
 # Build the application
-RUN pnpm install
 RUN pnpm build
 
 # Production stage

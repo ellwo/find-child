@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -31,8 +32,8 @@ const AdminBuses: React.FC = () => {
     bus_number: '',
     driver_name: '',
     driver_phone: '',
-    gps_tracker_id: '',
-    camera_id: '',
+    gps_tracker_id: 'none',
+    camera_id: 'none',
     morning_start: '',
     morning_end: '',
     afternoon_start: '',
@@ -112,8 +113,8 @@ const AdminBuses: React.FC = () => {
       bus_number: '',
       driver_name: '',
       driver_phone: '',
-      gps_tracker_id: '',
-      camera_id: '',
+      gps_tracker_id: 'none',
+      camera_id: 'none',
       morning_start: '',
       morning_end: '',
       afternoon_start: '',
@@ -128,8 +129,8 @@ const AdminBuses: React.FC = () => {
       bus_number: bus.bus_number,
       driver_name: bus.driver_name,
       driver_phone: bus.driver_phone,
-      gps_tracker_id: bus.gps_tracker_id?.toString() || '',
-      camera_id: bus.camera_id || '',
+      gps_tracker_id: bus.gps_tracker_id?.toString() || 'none',
+      camera_id: bus.camera_id || 'none',
       morning_start: bus.morning_start || '',
       morning_end: bus.morning_end || '',
       afternoon_start: bus.afternoon_start || '',
@@ -143,8 +144,8 @@ const AdminBuses: React.FC = () => {
     e.preventDefault();
     const data = {
       ...formData,
-      gps_tracker_id: formData.gps_tracker_id ? parseInt(formData.gps_tracker_id) : null,
-      camera_id: formData.camera_id || null,
+      gps_tracker_id: formData.gps_tracker_id && formData.gps_tracker_id !== 'none' ? parseInt(formData.gps_tracker_id) : null,
+      camera_id: formData.camera_id && formData.camera_id !== 'none' ? formData.camera_id : null,
     };
 
     if (editingBus) {
@@ -171,6 +172,9 @@ const AdminBuses: React.FC = () => {
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingBus ? 'تعديل حافلة' : 'إضافة حافلة جديدة'}</DialogTitle>
+              <DialogDescription>
+                {editingBus ? 'قم بتعديل معلومات الحافلة' : 'أدخل معلومات الحافلة الجديدة'}
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -201,14 +205,14 @@ const AdminBuses: React.FC = () => {
                 <div>
                   <Label>جهاز التتبع GPS</Label>
                   <Select
-                    value={formData.gps_tracker_id}
+                    value={formData.gps_tracker_id || 'none'}
                     onValueChange={(value) => setFormData({ ...formData, gps_tracker_id: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="اختر جهاز التتبع" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">لا يوجد</SelectItem>
+                      <SelectItem value="none">لا يوجد</SelectItem>
                       {trackers?.map((tracker: any) => (
                         <SelectItem key={tracker.id} value={tracker.id.toString()}>
                           {tracker.device_id} - {tracker.device_name}
@@ -220,14 +224,14 @@ const AdminBuses: React.FC = () => {
                 <div>
                   <Label>الكاميرا</Label>
                   <Select
-                    value={formData.camera_id}
+                    value={formData.camera_id || 'none'}
                     onValueChange={(value) => setFormData({ ...formData, camera_id: value })}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="اختر الكاميرا" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">لا يوجد</SelectItem>
+                      <SelectItem value="none">لا يوجد</SelectItem>
                       {cameras?.map((camera: any) => (
                         <SelectItem key={camera.code} value={camera.code}>
                           {camera.code} - {camera.name}

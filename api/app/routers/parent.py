@@ -20,7 +20,7 @@ async def get_my_students(
 ):
     """Get all students for the current parent."""
     students = crud.get_students_by_parent(db, current_user.id)
-    return students
+    return [schemas.StudentResponse.from_orm_with_url(s) for s in students]
 
 
 @router.get("/students/{student_id}", response_model=schemas.StudentResponse)
@@ -43,7 +43,7 @@ async def get_student(
             detail="You don't have access to this student"
         )
     
-    return student
+    return schemas.StudentResponse.from_orm_with_url(student)
 
 
 @router.get("/students/{student_id}/last-attendance", response_model=Optional[schemas.AttendanceResponse])
@@ -140,21 +140,10 @@ async def get_bus_location(
     if bus.gps_tracker_id:
         tracker = crud.get_gps_tracker_by_id(db, bus.gps_tracker_id)
     
-    # Check if bus is in active time
-    is_active_time = False
-    if bus.morning_start and bus.morning_end:
-        now = datetime.utcnow().time()
-        morning_start = datetime.strptime(bus.morning_start, "%H:%M").time()
-        morning_end = datetime.strptime(bus.morning_end, "%H:%M").time()
-        if morning_start <= now <= morning_end:
-            is_active_time = True
-    
-    if not is_active_time and bus.afternoon_start and bus.afternoon_end:
-        now = datetime.utcnow().time()
-        afternoon_start = datetime.strptime(bus.afternoon_start, "%H:%M").time()
-        afternoon_end = datetime.strptime(bus.afternoon_end, "%H:%M").time()
-        if afternoon_start <= now <= afternoon_end:
-            is_active_time = True
+    # Check if WebSocket is enabled in system settings (this controls real-time tracking)
+    # Bus activity times (morning_start, morning_end, etc.) are now just informational
+    settings = crud.get_system_settings(db)
+    is_active_time = settings.websocket_enabled if settings else True
     
     return {
         "bus": {
@@ -189,7 +178,7 @@ async def get_route_history(
             detail="Student not found"
         )
     
-    if student.parent_id != current_user.id:
+    if student.parent_id != current_user.id and current_user.role != models.UserRole.SYSTEM_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have access to this student"

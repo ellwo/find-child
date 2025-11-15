@@ -66,7 +66,7 @@ async def require_parent(
     current_user: models.User = Depends(get_current_user)
 ) -> models.User:
     """Require parent role."""
-    if current_user.role != models.UserRole.PARENT:
+    if current_user.role != models.UserRole.PARENT and current_user.role != models.UserRole.SYSTEM_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Parent access required."

@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = "";
+// Get API base URL from environment or use relative path
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -30,11 +31,24 @@ api.interceptors.response.use(
 );
 
 // Authentication APIs
-export const login = async (username: string, password: string) => {
-  const response = await api.post('/api/auth/login', {
-    username,
+export const login = async (usernameOrEmail: string, password: string): Promise<{ access_token: string }> => {
+  // Determine if input is email, phone, or username
+  const isEmail = usernameOrEmail.includes('@');
+  const isPhone = /^[\d+\-\s()]+$/.test(usernameOrEmail);
+  
+  const loginData: any = {
     password,
-  });
+  };
+  
+  if (isEmail) {
+    loginData.email = usernameOrEmail;
+  } else if (isPhone) {
+    loginData.phone = usernameOrEmail;
+  } else {
+    loginData.username = usernameOrEmail;
+  }
+  
+  const response = await api.post('/api/auth/login', loginData);
   return response.data;
 };
 
@@ -110,10 +124,32 @@ export const getStudent = async (id: number) => {
   return response.data;
 };
 
+export const getStudentTracking = async (id: number) => {
+  const response = await api.get(`/api/admin/students/${id}/tracking`);
+  return response.data;
+};
+
+export const getStudentAttendanceHistory = async (
+  id: number,
+  params?: { start_date?: string; end_date?: string; bus_id?: number; skip?: number; limit?: number }
+) => {
+  const response = await api.get(`/api/admin/students/${id}/attendance/history`, { params });
+  return response.data;
+};
+
 export const createStudent = async (data: any, faceImage?: File) => {
   const formData = new FormData();
   Object.keys(data).forEach((key) => {
-    formData.append(key, data[key]);
+    const value = data[key];
+    // Skip undefined, null, or empty string values (except for required fields)
+    if (value !== undefined && value !== null && value !== '') {
+      // Convert to string for form data
+      if (typeof value === 'object') {
+        formData.append(key, JSON.stringify(value));
+      } else {
+        formData.append(key, String(value));
+      }
+    }
   });
   if (faceImage) {
     formData.append('face_image', faceImage);
@@ -127,8 +163,15 @@ export const createStudent = async (data: any, faceImage?: File) => {
 export const updateStudent = async (id: number, data: any, faceImage?: File) => {
   const formData = new FormData();
   Object.keys(data).forEach((key) => {
-    if (data[key] !== undefined) {
-      formData.append(key, data[key]);
+    const value = data[key];
+    // Skip undefined, null, or empty string values (except for required fields)
+    if (value !== undefined && value !== null && value !== '') {
+      // Convert to string for form data
+      if (typeof value === 'object') {
+        formData.append(key, JSON.stringify(value));
+      } else {
+        formData.append(key, String(value));
+      }
     }
   });
   if (faceImage) {
@@ -174,6 +217,19 @@ export const updateSettings = async (data: any) => {
 // Admin APIs - Dashboard
 export const getDashboardStats = async () => {
   const response = await api.get('/api/admin/dashboard/stats');
+  return response.data;
+};
+
+// Admin APIs - Attendance Report
+export const getAttendanceReport = async (params?: {
+  start_date?: string;
+  end_date?: string;
+  bus_id?: number;
+  student_id?: number;
+  skip?: number;
+  limit?: number;
+}) => {
+  const response = await api.get('/api/admin/reports/attendance', { params });
   return response.data;
 };
 

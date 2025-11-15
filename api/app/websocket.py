@@ -23,7 +23,7 @@ class ConnectionManager:
     
     async def connect_admin_buses(self, websocket: WebSocket):
         """Connect admin to buses tracking."""
-        await websocket.accept()
+        # Don't accept here - it's already accepted in the endpoint
         self.admin_buses_connections.add(websocket)
     
     async def disconnect_admin_buses(self, websocket: WebSocket):
@@ -32,7 +32,7 @@ class ConnectionManager:
     
     async def connect_parent(self, websocket: WebSocket, student_id: int):
         """Connect parent to student tracking."""
-        await websocket.accept()
+        # Don't accept here - it's already accepted in the endpoint
         if student_id not in self.parent_connections:
             self.parent_connections[student_id] = set()
         self.parent_connections[student_id].add(websocket)
@@ -46,7 +46,7 @@ class ConnectionManager:
     
     async def connect_device(self, websocket: WebSocket, tracker_id: str):
         """Connect GPS device."""
-        await websocket.accept()
+        # Don't accept here - it's already accepted in the endpoint
         if tracker_id not in self.device_connections:
             self.device_connections[tracker_id] = set()
         self.device_connections[tracker_id].add(websocket)
@@ -120,7 +120,11 @@ manager = ConnectionManager()
 
 async def websocket_admin_buses(websocket: WebSocket):
     """WebSocket endpoint for admin to track all buses."""
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except RuntimeError:
+        # Already accepted
+        pass
     db = SessionLocal()
     try:
         # Send initial bus locations
@@ -154,7 +158,11 @@ async def websocket_admin_buses(websocket: WebSocket):
 
 async def websocket_parent_student(websocket: WebSocket, student_id: int):
     """WebSocket endpoint for parent to track a specific student's bus."""
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except RuntimeError:
+        # Already accepted
+        pass
     db = SessionLocal()
     try:
         # Verify student exists
@@ -193,7 +201,11 @@ async def websocket_parent_student(websocket: WebSocket, student_id: int):
 
 async def websocket_device_gps(websocket: WebSocket, tracker_id: str):
     """WebSocket endpoint for GPS device to send location updates."""
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except RuntimeError:
+        # Already accepted
+        pass
     db = SessionLocal()
     try:
         # Verify tracker exists

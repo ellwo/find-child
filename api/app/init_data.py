@@ -25,11 +25,23 @@ def init_default_data():
                 default_afternoon_start="12:30",
                 default_afternoon_end="15:00",
                 attendance_interval_minutes=5,
+                attendance_similarity_threshold=0.9,
+                max_daily_attendances=2,
                 websocket_enabled=True
             )
             crud.create_system_settings(db, default_settings)
             print("✓ System settings created")
         else:
+            # Update existing settings to add new fields if they don't exist
+            try:
+                if not hasattr(settings, 'attendance_similarity_threshold') or settings.attendance_similarity_threshold is None:
+                    settings.attendance_similarity_threshold = 0.9
+                if not hasattr(settings, 'max_daily_attendances') or settings.max_daily_attendances is None:
+                    settings.max_daily_attendances = 2
+                db.commit()
+                print("✓ System settings updated with new fields")
+            except Exception as e:
+                print(f"Note: Could not update settings fields (may need migration): {str(e)}")
             print("✓ System settings already exist")
         
         # Create default admin user if not exists

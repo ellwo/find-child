@@ -12,12 +12,14 @@ const AdminLogin: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
 
     try {
       await login(username, password);
@@ -27,9 +29,11 @@ const AdminLogin: React.FC = () => {
       });
       navigate('/admin/dashboard');
     } catch (error: any) {
+      const errorMessage = error.response?.data?.detail || error.message || 'اسم المستخدم أو كلمة المرور غير صحيحة';
+      setError(errorMessage);
       toast({
         title: 'خطأ في تسجيل الدخول',
-        description: error.response?.data?.detail || 'اسم المستخدم أو كلمة المرور غير صحيحة',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -50,17 +54,25 @@ const AdminLogin: React.FC = () => {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">اسم المستخدم</Label>
+              <Label htmlFor="username">اسم المستخدم أو البريد الإلكتروني</Label>
               <Input
                 id="username"
                 type="text"
-                placeholder="أدخل اسم المستخدم"
+                placeholder="أدخل اسم المستخدم أو البريد الإلكتروني"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setError('');
+                }}
                 required
                 disabled={loading}
               />
             </div>
+            {error && (
+              <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">
+                {error}
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="password">كلمة المرور</Label>
               <Input

@@ -394,17 +394,20 @@ def get_last_attendance_by_student(db: Session, student_id: int) -> Optional[mod
 
 def get_attendance_history(
     db: Session,
-    student_id: int,
+    student_id: Optional[int] = None,
+    bus_id: Optional[int] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     skip: int = 0,
     limit: int = 100
 ) -> Tuple[List[models.Attendance], int]:
-    """Get attendance history for a student."""
-    query = db.query(models.Attendance).filter(
-        models.Attendance.student_id == student_id
-    )
+    """Get attendance history with optional filters."""
+    query = db.query(models.Attendance)
     
+    if student_id:
+        query = query.filter(models.Attendance.student_id == student_id)
+    if bus_id:
+        query = query.filter(models.Attendance.bus_id == bus_id)
     if start_date:
         start_ts = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=None)
         query = query.filter(models.Attendance.detected_at >= start_ts)
@@ -428,6 +431,34 @@ def get_attendances_today(db: Session) -> int:
             models.Attendance.detected_at <= end_ts
         )
     ).count()
+
+
+def get_attendances_today_by_student(db: Session, student_id: int) -> int:
+    """Get count of attendances today for a specific student."""
+    today = datetime.utcnow().date()
+    start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=None)
+    end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=None)
+    return db.query(models.Attendance).filter(
+        and_(
+            models.Attendance.student_id == student_id,
+            models.Attendance.detected_at >= start_ts,
+            models.Attendance.detected_at <= end_ts
+        )
+    ).count()
+
+
+def get_attendance_today_by_student(db: Session, student_id: int) -> Optional[models.Attendance]:
+    """Get today's attendance record for a specific student (if exists)."""
+    today = datetime.utcnow().date()
+    start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=None)
+    end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=None)
+    return db.query(models.Attendance).filter(
+        and_(
+            models.Attendance.student_id == student_id,
+            models.Attendance.detected_at >= start_ts,
+            models.Attendance.detected_at <= end_ts
+        )
+    ).order_by(models.Attendance.detected_at.desc()).first()
 
 
 # GPS Log CRUD

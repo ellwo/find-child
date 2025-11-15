@@ -3,7 +3,7 @@ CompreFace API client using the official CompreFace Python SDK.
 """
 import os
 import time
-from typing import List, Dict
+from typing import List, Dict, Optional
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from compreface import CompreFace
@@ -12,8 +12,14 @@ from compreface.service import RecognitionService, VerificationService
 load_dotenv()
 
 COMPREFACE_URL = os.getenv("COMPREFACE_URL", "http://compreface-api:3000")
-COMPREFACE_API_KEY = os.getenv("COMPREFACE_API_KEY", "")
-COMPREFACE_SUBJECT = os.getenv("COMPREFACE_SUBJECT", "faces")
+# Separate API keys for different services
+COMPREFACE_VERIFICATION_KEY = os.getenv("COMPREFACE_VERIFICATION_KEY", "")
+COMPREFACE_RECOGNITION_KEY = os.getenv("COMPREFACE_RECOGNITION_KEY", "")
+COMPREFACE_DETECTION_KEY = os.getenv("COMPREFACE_DETECTION_KEY", "")
+# Get subject and ensure it's not empty
+COMPREFACE_SUBJECT = os.getenv("COMPREFACE_SUBJECT", "faces").strip()
+if not COMPREFACE_SUBJECT:
+    COMPREFACE_SUBJECT = "faces"  # Default fallback
 
 # Initialize CompreFace SDK
 # Parse URL to get domain and port
@@ -26,6 +32,7 @@ compreface_port = str(parsed_url.port) if parsed_url.port else ("443" if parsed_
 _compreface_instance = None
 _recognition_service = None
 _verification_service = None
+_detection_service = None
 
 
 def _get_compreface_instance():
@@ -40,10 +47,10 @@ def _get_recognition_service():
     """Get or create recognition service."""
     global _recognition_service
     if _recognition_service is None:
-        if not COMPREFACE_API_KEY:
-            raise ValueError("COMPREFACE_API_KEY not configured")
+        if not COMPREFACE_RECOGNITION_KEY:
+            raise ValueError("COMPREFACE_RECOGNITION_KEY not configured")
         compreface = _get_compreface_instance()
-        _recognition_service = compreface.init_face_recognition(COMPREFACE_API_KEY)
+        _recognition_service = compreface.init_face_recognition(COMPREFACE_RECOGNITION_KEY)
     return _recognition_service
 
 
@@ -51,19 +58,31 @@ def _get_verification_service():
     """Get or create verification service."""
     global _verification_service
     if _verification_service is None:
-        if not COMPREFACE_API_KEY:
-            raise ValueError("COMPREFACE_API_KEY not configured")
+        if not COMPREFACE_VERIFICATION_KEY:
+            raise ValueError("COMPREFACE_VERIFICATION_KEY not configured")
         compreface = _get_compreface_instance()
-        _verification_service = compreface.init_face_verification(COMPREFACE_API_KEY)
+        _verification_service = compreface.init_face_verification(COMPREFACE_VERIFICATION_KEY)
     return _verification_service
 
 
-def index_face(file_path: str, retries: int = 3) -> str:
+def _get_detection_service():
+    """Get or create detection service."""
+    global _detection_service
+    if _detection_service is None:
+        if not COMPREFACE_DETECTION_KEY:
+            raise ValueError("COMPREFACE_DETECTION_KEY not configured")
+        compreface = _get_compreface_instance()
+        _detection_service = compreface.init_face_detection(COMPREFACE_DETECTION_KEY)
+    return _detection_service
+
+
+def index_face(file_path: str, subject: Optional[str] = None, retries: int = 3) -> str:
     """
     Index a face image in CompreFace using the official SDK.
     
     Args:
         file_path: Path to the image file to index
+        subject: Subject name (optional, defaults to COMPREFACE_SUBJECT)
         retries: Number of retry attempts on transient failures
     
     Returns:
@@ -75,18 +94,31 @@ def index_face(file_path: str, retries: int = 3) -> str:
     recognition = _get_recognition_service()
     face_collection = recognition.get_face_collection()
     
+    # Use provided subject or fallback to global COMPREFACE_SUBJECT
+    subject_name = (subject or COMPREFACE_SUBJECT).strip()
+    if not subject_name:
+        subject_name = "faces"  # Final fallback
+    
     for attempt in range(retries):
         try:
             # Add face to collection using SDK
-            result = face_collection.add(image_path=file_path, subject=COMPREFACE_SUBJECT)
+            result = face_collection.add(image_path=file_path, subject=subject_name)
             
             # SDK returns a dict with image_id
             image_id = result.get("image_id")
             if image_id:
                 return str(image_id)
             else:
+                # Check if there's an error message
+                error_message = result.get("message", "")
+                error_code = result.get("code", "")
+                if error_message or error_code:
+                    raise ValueError(f"CompreFace error (code {error_code}): {error_message}")
                 raise ValueError(f"Unexpected CompreFace SDK response format: {result}")
                 
+        except ValueError as e:
+            # Don't retry on ValueError (configuration errors)
+            raise Exception(f"Failed to index face: {str(e)}")
         except Exception as e:
             if attempt < retries - 1:
                 time.sleep(1 * (attempt + 1))  # Exponential backoff
@@ -180,4 +212,38 @@ def compare_faces(face1_path: str, face2_path: str) -> float:
         
     except Exception as e:
         raise Exception(f"Failed to compare faces: {str(e)}")
+
+
+def detect_face(image_path: str) -> bool:
+    """
+    Detect if an image contains a face using CompreFace Detection Service.
+    
+    Args:
+        image_path: Path to the image file to check
+    
+    Returns:
+        True if face is detected, False otherwise
+    
+    Raises:
+        Exception: If detection fails
+    """
+    detection = _get_detection_service()
+    
+    try:
+        # Use SDK detect method
+        result = detection.detect(image_path=image_path)
+        
+        # SDK returns: {"result": [{"box": {...}, "subjects": [...], ...}, ...]}
+        # If result contains faces, return True
+        results = result.get("result", [])
+        if not results and isinstance(result, list):
+            results = result
+        
+        # Check if any faces were detected
+        return len(results) > 0
+        
+    except Exception as e:
+        # If detection fails, we assume no face (safer than assuming face exists)
+        print(f"Warning: Face detection failed: {str(e)}")
+        return False
 

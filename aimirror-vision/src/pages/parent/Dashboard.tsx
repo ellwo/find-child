@@ -50,9 +50,17 @@ const ParentDashboard: React.FC = () => {
             <Card key={student.id} className="glass-effect hover:shadow-elevated transition-all cursor-pointer">
               <CardHeader>
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center">
-                    <GraduationCap className="w-6 h-6 text-white" />
-                  </div>
+                  {student.image_url ? (
+                    <img 
+                      src={student.image_url} 
+                      alt={student.name}
+                      className="w-12 h-12 rounded-full object-cover border-2 border-primary"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-gradient-accent flex items-center justify-center">
+                      <GraduationCap className="w-6 h-6 text-white" />
+                    </div>
+                  )}
                   <div>
                     <CardTitle>{student.name}</CardTitle>
                     <p className="text-sm text-muted-foreground">

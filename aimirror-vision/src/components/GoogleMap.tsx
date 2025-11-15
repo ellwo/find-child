@@ -37,7 +37,7 @@ const GoogleMapComponent: React.FC<GoogleMapComponentProps> = ({
 }) => {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
-  const { isLoaded } = useJsApiLoader({
+  const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
     googleMapsApiKey: apiKey,
     libraries,
@@ -63,6 +63,49 @@ const GoogleMapComponent: React.FC<GoogleMapComponentProps> = ({
     [onMarkerClick]
   );
 
+  const routePath = useMemo(
+    () => route.map((point) => ({ lat: point.lat, lng: point.lng })),
+    [route]
+  );
+
+  const handleMapClick = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      if (!onMapClick || !e.latLng) return;
+      
+      try {
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        onMapClick({
+          latLng: {
+            lat: () => lat,
+            lng: () => lng,
+          },
+        });
+      } catch (error) {
+        console.error('Error in handleMapClick:', error);
+      }
+    },
+    [onMapClick]
+  );
+
+  const mapOptions = useMemo(
+    () => ({
+      disableDefaultUI: false,
+      zoomControl: true,
+      streetViewControl: false,
+      mapTypeControl: false,
+    }),
+    []
+  );
+
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center" style={{ height }}>
+        <div className="text-destructive">خطأ في تحميل Google Maps. يرجى التحقق من API Key.</div>
+      </div>
+    );
+  }
+
   if (!isLoaded) {
     return (
       <div className="flex items-center justify-center" style={{ height }}>
@@ -79,32 +122,17 @@ const GoogleMapComponent: React.FC<GoogleMapComponentProps> = ({
     );
   }
 
-  const routePath = route.map((point) => ({ lat: point.lat, lng: point.lng }));
-
-  const handleMapClick = useCallback(
-    (e: google.maps.MapMouseEvent) => {
-      if (onMapClick && e.latLng) {
-        onMapClick({
-          latLng: {
-            lat: () => e.latLng!.lat(),
-            lng: () => e.latLng!.lng(),
-          },
-        });
-      }
-    },
-    [onMapClick]
-  );
-
   return (
     <GoogleMap 
       mapContainerStyle={mapContainerStyle} 
       center={center} 
       zoom={zoom}
       onClick={onMapClick ? handleMapClick : undefined}
+      options={mapOptions}
     >
       {markers.map((marker, index) => (
         <Marker
-          key={index}
+          key={`marker-${index}-${marker.lat}-${marker.lng}`}
           position={{ lat: marker.lat, lng: marker.lng }}
           label={marker.label}
           onClick={() => handleMarkerClick(marker)}
@@ -138,4 +166,3 @@ const GoogleMapComponent: React.FC<GoogleMapComponentProps> = ({
 };
 
 export default GoogleMapComponent;
-

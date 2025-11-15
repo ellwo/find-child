@@ -20,7 +20,8 @@ const AdminLiveTracking: React.FC = () => {
 
     // Initialize WebSocket connection
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/admin/buses`;
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/admin/buses`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -59,7 +60,8 @@ const AdminLiveTracking: React.FC = () => {
     };
   }, [buses]);
 
-  const activeBuses = buses?.filter((bus: any) => bus.is_active && bus.gps_tracker_id) || [];
+  const busesArray = Array.isArray(buses) ? buses : [];
+  const activeBuses = busesArray.filter((bus: any) => bus.is_active && bus.gps_tracker_id);
   const markers = activeBuses
     .map((bus: any) => {
       const location = busLocations.get(bus.id);

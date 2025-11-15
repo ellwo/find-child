@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import {
   LayoutDashboard,
@@ -11,6 +12,13 @@ import {
   Sun,
   Moon,
   Languages,
+  LogOut,
+  Settings,
+  Bus,
+  Users,
+  GraduationCap,
+  MapPin,
+  UserCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -21,7 +29,9 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { t, i18n } = useTranslation();
   const { theme, toggleTheme } = useTheme();
+  const { isAuthenticated, isAdmin, isParent, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const isRTL = i18n.language === 'ar';
 
   useEffect(() => {
@@ -32,12 +42,40 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     i18n.changeLanguage(i18n.language === 'ar' ? 'en' : 'ar');
   };
 
-  const navItems = [
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
+  // Public navigation items
+  const publicNavItems = [
     { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
     { path: '/cameras', label: t('nav.cameras'), icon: Camera },
     { path: '/saved-images', label: t('nav.savedImages'), icon: Images },
     { path: '/search', label: t('nav.search'), icon: Search },
   ];
+
+  // Admin navigation items
+  const adminNavItems = [
+    { path: '/admin/dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
+    { path: '/admin/buses', label: 'الحافلات', icon: Bus },
+    { path: '/admin/parents', label: 'أولياء الأمور', icon: Users },
+    { path: '/admin/students', label: 'الطلاب', icon: GraduationCap },
+    { path: '/admin/attendance', label: 'الحضور', icon: UserCheck },
+    { path: '/admin/live-tracking', label: 'التتبع اللحظي', icon: MapPin },
+    { path: '/admin/settings', label: 'الإعدادات', icon: Settings },
+  ];
+
+  // Parent navigation items
+  const parentNavItems = [
+    { path: '/parent/dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
+  ];
+
+  const navItems = isAdmin 
+    ? adminNavItems 
+    : isParent 
+    ? parentNavItems 
+    : publicNavItems;
 
   return (
     <div className="min-h-screen bg-gradient-subtle">
@@ -79,6 +117,31 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
+              {!isAuthenticated && (
+                <>
+                  <Link to="/admin/login">
+                    <Button variant="outline" size="sm">
+                      تسجيل دخول الإدارة
+                    </Button>
+                  </Link>
+                  <Link to="/parent/login">
+                    <Button variant="outline" size="sm">
+                      تسجيل دخول ولي الأمر
+                    </Button>
+                  </Link>
+                </>
+              )}
+              {isAuthenticated && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLogout}
+                  className="gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  تسجيل الخروج
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"

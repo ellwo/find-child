@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, MapPin, Clock, UserCheck, Bus, Phone } from 'lucide-react';
 import { format } from 'date-fns';
+import { ar } from 'date-fns/locale';
 import GoogleMapComponent from '@/components/GoogleMap';
 
 const ParentStudentTracking: React.FC = () => {
@@ -82,7 +83,8 @@ const ParentStudentTracking: React.FC = () => {
     if (!studentId || !busLocationData?.is_active_time) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/parent/${studentId}`;
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/parent/${studentId}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
@@ -165,9 +167,22 @@ const ParentStudentTracking: React.FC = () => {
           <ArrowLeft className="w-4 h-4 mr-2" />
           العودة
         </Button>
-        <div>
-          <h1 className="text-3xl font-bold">{student.name}</h1>
-          <p className="text-muted-foreground mt-2">متابعة النشاط والموقع</p>
+        <div className="flex items-center gap-4">
+          {student.image_url ? (
+            <img 
+              src={student.image_url} 
+              alt={student.name}
+              className="w-16 h-16 rounded-full object-cover border-2 border-primary"
+            />
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center">
+              <UserCheck className="w-8 h-8 text-white" />
+            </div>
+          )}
+          <div>
+            <h1 className="text-3xl font-bold">{student.name}</h1>
+            <p className="text-muted-foreground mt-2">متابعة النشاط والموقع</p>
+          </div>
         </div>
       </div>
 
@@ -210,7 +225,14 @@ const ParentStudentTracking: React.FC = () => {
                   {busLocationData?.is_active_time && (
                     <div className="mt-4">
                       <Badge variant="default" className="mb-2">
-                        وقت نشط - التتبع اللحظي متاح
+                        التتبع اللحظي مفعل
+                      </Badge>
+                    </div>
+                  )}
+                  {!busLocationData?.is_active_time && (
+                    <div className="mt-4">
+                      <Badge variant="secondary" className="mb-2">
+                        التتبع اللحظي معطل (يرجى تفعيل WebSocket من الإعدادات)
                       </Badge>
                     </div>
                   )}

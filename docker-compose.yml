@@ -5,6 +5,8 @@ volumes:
   compreface_postgres_data:
   storage_data:
 
+  redis_data:
+
 services:
   # PostgreSQL for the API
   postgres:
@@ -121,6 +123,21 @@ services:
     networks:
       - faces_network
 
+  # Redis for Celery message broker
+  redis:
+    image: redis:7-alpine
+    container_name: find-child-redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - faces_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # FastAPI Backend
   api:
     build:
@@ -129,11 +146,15 @@ services:
     container_name: api
     env_file:
       - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - storage_data:/data/storage
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       compreface-postgres-db:
@@ -148,14 +169,38 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    command: uvicorn app.main:app --host ${BACKEND_HOST:-0.0.0.0} --port 8000
+    # command: uvicorn app.main:app --host ${BACKEND_HOST:-0.0.0.0} --port 8000
+
+  # Celery Worker for background image processing
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.worker
+    container_name: find-child-worker
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - storage_data:/data/storage
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - faces_network
+    restart: unless-stopped
 
   web:
     build:
       context: ./aimirror-vision
       dockerfile: Dockerfile
       args:
-        - VITE_API_BASE_URL=http://api:8000
+        - VITE_API_BASE_URL=
+        - VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY}
     container_name: aimirror-vision
     ports:
       - "${WEB_PORT:-8002}:80"

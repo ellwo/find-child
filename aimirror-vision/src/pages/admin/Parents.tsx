@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -146,6 +147,9 @@ const AdminParents: React.FC = () => {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingParent ? 'تعديل ولي أمر' : 'إضافة ولي أمر جديد'}</DialogTitle>
+              <DialogDescription>
+                {editingParent ? 'قم بتعديل معلومات ولي الأمر' : 'أدخل معلومات ولي الأمر الجديد'}
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>

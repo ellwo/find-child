@@ -25,6 +25,9 @@ from app.dependencies import get_current_user, require_admin, require_parent
 from app.routers import admin, parent
 from app.services import gps_service, face_recognition
 from app.websocket import websocket_admin_buses, websocket_parent_student, websocket_device_gps, manager
+import asyncio
+import json
+import redis
 
 load_dotenv()
 
@@ -63,6 +66,80 @@ app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 # Include routers
 app.include_router(admin.router)
 app.include_router(parent.router)
+
+
+# Redis subscriber for attendance updates from worker
+async def redis_subscriber():
+    """Subscribe to Redis pub/sub for attendance updates and broadcast via WebSocket."""
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    
+    # Wait for Redis to be available (with retries)
+    max_retries = 10
+    retry_delay = 2
+    redis_client = None
+    
+    for attempt in range(max_retries):
+        try:
+            redis_client = redis.from_url(redis_url, decode_responses=True, socket_connect_timeout=2)
+            redis_client.ping()  # Test connection
+            print(f"Redis subscriber connected successfully (attempt {attempt + 1})")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Redis connection attempt {attempt + 1} failed, retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"Warning: Redis subscriber failed after {max_retries} attempts: {str(e)}")
+                print("WebSocket broadcasting from worker will not work until Redis is available.")
+                return
+    
+    if not redis_client:
+        return
+    
+    try:
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe("attendance_updates")
+        
+        print("Redis subscriber started for attendance updates")
+        
+        # Process messages in async loop (non-blocking)
+        while True:
+            try:
+                # Get next message (non-blocking check)
+                message = pubsub.get_message(timeout=1.0)
+                if message and message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        student_id = data.get("student_id")
+                        attendance_data = data.get("data", {})
+                        
+                        # Broadcast via WebSocket
+                        await manager.broadcast_attendance(student_id, attendance_data)
+                    except Exception as e:
+                        print(f"Error processing attendance update from Redis: {str(e)}")
+                else:
+                    # No message, yield control
+                    await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"Error in Redis subscriber loop: {str(e)}")
+                await asyncio.sleep(1)  # Wait before retrying
+    except Exception as e:
+        print(f"Error in Redis subscriber: {str(e)}")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on startup."""
+    # Run database migration first
+    try:
+        from app.migrate_settings import migrate_settings
+        migrate_settings()
+    except Exception as e:
+        print(f"Warning: Migration failed (may already be applied): {str(e)}")
+    
+    # Start Redis subscriber in background
+    asyncio.create_task(redis_subscriber())
+
 
 # Get API key from environment
 CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "changeme_camera_api_key")
@@ -111,7 +188,7 @@ async def health_check(db: Session = Depends(get_db)):
     # Check CompreFace
     try:
         import requests
-        compreface_url = os.getenv("COMPREFACE_URL", "http://compreface-api:3000")
+        compreface_url = os.getenv("COMPREFACE_URL", "http://compreface-api:8080")
         # Try to reach CompreFace API health endpoint
         response = requests.get(f"{compreface_url}/api/v1/status", timeout=5)
         if response.status_code == 200:
@@ -228,94 +305,42 @@ async def upload_camera_face(
             detail=f"Failed to save image: {str(e)}"
         )
     
-    # Create or update camera record
+    # Create or update camera record (minimal DB operation)
     camera = crud.create_or_update_camera(db, camera_id, camera_name)
+    db.commit()
     
-    # Create captured image record (without compreface_face_id initially)
-    captured_image = crud.create_captured_image(
-        db=db,
+    # Queue image processing task in background worker
+    # All processing (face detection, recognition, attendance) happens in background
+    try:
+        from app.workers.image_processor import process_camera_image
+        task = process_camera_image.delay(
+            image_path=file_path,
+            camera_id=camera_id,
+            camera_name=camera_name or camera_id,
+            timestamp_str=parsed_timestamp.isoformat()
+        )
+        
+        # Return immediate response - camera device gets 200 OK immediately
+        image_url = get_image_url(file_path)
+        return schemas.UploadResponse(
+            id=0,  # Will be set by worker after processing
+            image_url=image_url,
         camera_id=camera_id,
-        camera_name=camera_name,
         timestamp=parsed_timestamp,
-        file_path=file_path,
         compreface_face_id=None
     )
-    
-    # Index face in CompreFace
-    compreface_face_id = None
-    try:
-        compreface_face_id = index_face(str(full_file_path))
-        # Update the record with compreface_face_id
-        crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
     except Exception as e:
-        # Log error but don't fail the upload - image is saved
-        print(f"Warning: Failed to index face in CompreFace: {str(e)}")
-    
-    # Try to identify student and record attendance
-    try:
-        # Get bus associated with camera
-        bus = None
-        if camera.bus:
-            bus = camera.bus
-        else:
-            bus = db.query(models.Bus).filter(models.Bus.camera_id == camera_id).first()
-        
-        if bus:
-            # Get GPS location from tracker
-            gps_latitude = None
-            gps_longitude = None
-            if bus.gps_tracker_id:
-                tracker = crud.get_gps_tracker_by_id(db, bus.gps_tracker_id)
-                if tracker:
-                    gps_latitude = tracker.last_latitude
-                    gps_longitude = tracker.last_longitude
-            
-            # Identify student from face
-            result = face_recognition.identify_student_from_face(
-                db, camera_id, file_path, gender_detected=None
-            )
-            
-            if result:
-                student, similarity = result
-                # Record attendance
-                attendance = face_recognition.record_attendance(
-                    db=db,
-                    student_id=student.id,
-                    bus_id=bus.id,
-                    detected_image_path=file_path,
-                    similarity_score=similarity,
-                    detected_at=parsed_timestamp,
-                    gps_latitude=gps_latitude,
-                    gps_longitude=gps_longitude,
-                    gender_detected=None
-                )
-                
-                # Broadcast attendance update via WebSocket
-                if attendance:
-                    try:
-                        await manager.broadcast_attendance(student.id, {
-                            "attendance_id": attendance.id,
-                            "detected_at": attendance.detected_at.isoformat(),
-                            "similarity_score": attendance.similarity_score,
-                            "gps_location": {
-                                "latitude": attendance.gps_latitude,
-                                "longitude": attendance.gps_longitude
-                            }
-                        })
-                    except Exception as e:
-                        print(f"Warning: Failed to broadcast attendance: {str(e)}")
-    except Exception as e:
-        # Log error but don't fail the upload
-        print(f"Warning: Failed to identify student or record attendance: {str(e)}")
-    
+        # If Celery is not available, log error but still return 200
+        # This ensures camera device always gets a response
+        print(f"Error: Celery not available, image saved but processing failed: {str(e)}")
+        print(f"Image saved at: {file_path}")
     image_url = get_image_url(file_path)
-    
     return schemas.UploadResponse(
-        id=captured_image.id,
+            id=0,
         image_url=image_url,
         camera_id=camera_id,
         timestamp=parsed_timestamp,
-        compreface_face_id=compreface_face_id
+            compreface_face_id=None
     )
 
 

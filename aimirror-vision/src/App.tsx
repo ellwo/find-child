@@ -20,6 +20,8 @@ import AdminParents from "./pages/admin/Parents";
 import AdminStudents from "./pages/admin/Students";
 import AdminSettings from "./pages/admin/Settings";
 import AdminLiveTracking from "./pages/admin/LiveTracking";
+import AdminStudentTracking from "./pages/admin/StudentTracking";
+import AdminAttendance from "./pages/admin/Attendance";
 
 // Parent pages
 import ParentLogin from "./pages/parent/Login";
@@ -119,6 +121,22 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <Layout><AdminLiveTracking /></Layout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/students/:id/tracking"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Layout><AdminStudentTracking /></Layout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/attendance"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Layout><AdminAttendance /></Layout>
                   </ProtectedRoute>
                 }
               />

@@ -54,6 +54,8 @@ class SystemSettingsBase(BaseModel):
     default_afternoon_start: Optional[str] = None
     default_afternoon_end: Optional[str] = None
     attendance_interval_minutes: int = 5
+    attendance_similarity_threshold: float = 0.9
+    max_daily_attendances: int = 2
     websocket_enabled: bool = True
 
 
@@ -208,9 +210,34 @@ class StudentResponse(StudentBase):
     updated_at: datetime
     parent: Optional[UserResponse] = None
     bus: Optional[BusResponse] = None
+    image_url: Optional[str] = None  # URL to access the face image
 
     class Config:
         from_attributes = True
+        
+    @classmethod
+    def from_orm_with_url(cls, obj, image_url: Optional[str] = None):
+        """Create StudentResponse with image_url."""
+        from app.utils import get_image_url
+        data = {
+            "id": obj.id,
+            "name": obj.name,
+            "age": obj.age,
+            "gender": obj.gender,
+            "parent_id": obj.parent_id,
+            "bus_id": obj.bus_id,
+            "home_address": obj.home_address,
+            "home_latitude": obj.home_latitude,
+            "home_longitude": obj.home_longitude,
+            "face_image_path": obj.face_image_path,
+            "compreface_face_id": obj.compreface_face_id,
+            "created_at": obj.created_at,
+            "updated_at": obj.updated_at,
+            "parent": obj.parent,
+            "bus": obj.bus,
+            "image_url": image_url or (get_image_url(obj.face_image_path) if obj.face_image_path else None),
+        }
+        return cls(**data)
 
 
 # Attendance Schemas
@@ -228,9 +255,31 @@ class AttendanceResponse(BaseModel):
     created_at: datetime
     student: Optional[StudentResponse] = None
     bus: Optional[BusResponse] = None
+    image_url: Optional[str] = None  # URL to access the detected image
 
     class Config:
         from_attributes = True
+        
+    @classmethod
+    def from_orm_with_url(cls, obj, image_url: Optional[str] = None):
+        """Create AttendanceResponse with image_url."""
+        from app.utils import get_image_url
+        data = {
+            "id": obj.id,
+            "student_id": obj.student_id,
+            "bus_id": obj.bus_id,
+            "detected_image_path": obj.detected_image_path,
+            "similarity_score": obj.similarity_score,
+            "detected_at": obj.detected_at,
+            "gps_latitude": obj.gps_latitude,
+            "gps_longitude": obj.gps_longitude,
+            "gender_detected": obj.gender_detected,
+            "created_at": obj.created_at,
+            "student": obj.student,
+            "bus": obj.bus,
+            "image_url": image_url or get_image_url(obj.detected_image_path),
+        }
+        return cls(**data)
 
 
 # GPS Log Schemas

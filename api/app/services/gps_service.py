@@ -53,3 +53,40 @@ def get_bus_route_path(
     return [(log.latitude, log.longitude, log.timestamp) for log in gps_logs]
 
 
+def is_active_time(bus: models.Bus) -> bool:
+    """
+    Check if current time is within bus active hours.
+    
+    NOTE: This function is for informational purposes only.
+    Real-time tracking availability is controlled by websocket_enabled in system settings.
+    Bus activity times (morning_start, morning_end, etc.) are just informational data
+    and do not affect real-time tracking functionality.
+    """
+    if not bus:
+        return False
+    
+    now = datetime.utcnow().time()
+    
+    # Check morning time
+    if bus.morning_start and bus.morning_end:
+        try:
+            morning_start = datetime.strptime(bus.morning_start, "%H:%M").time()
+            morning_end = datetime.strptime(bus.morning_end, "%H:%M").time()
+            if morning_start <= now <= morning_end:
+                return True
+        except (ValueError, AttributeError):
+            pass
+    
+    # Check afternoon time
+    if bus.afternoon_start and bus.afternoon_end:
+        try:
+            afternoon_start = datetime.strptime(bus.afternoon_start, "%H:%M").time()
+            afternoon_end = datetime.strptime(bus.afternoon_end, "%H:%M").time()
+            if afternoon_start <= now <= afternoon_end:
+                return True
+        except (ValueError, AttributeError):
+            pass
+    
+    return False
+
+

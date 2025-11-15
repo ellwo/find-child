@@ -42,10 +42,13 @@ def identify_student_from_face(
     if not students:
         return None
     
+    # Get similarity threshold from settings
+    settings = crud.get_system_settings(db)
+    threshold = settings.attendance_similarity_threshold if settings else 0.9
+    
     # Compare face with all students
     best_match = None
     best_similarity = 0.0
-    threshold = 0.7  # Minimum similarity threshold
     
     full_image_path = Path(get_storage_path()) / image_path
     
@@ -89,33 +92,51 @@ def record_attendance(
 ) -> Optional[models.Attendance]:
     """
     Record attendance for a student.
-    Checks attendance interval before creating/updating record.
+    Implements new logic:
+    - Checks similarity threshold from settings (default 0.9)
+    - Checks max daily attendances from settings (default 2)
+    - Only updates if new similarity is higher than existing
     """
-    # Get system settings for attendance interval
+    # Get system settings
     settings = crud.get_system_settings(db)
-    interval_minutes = settings.attendance_interval_minutes if settings else 5
+    similarity_threshold = settings.attendance_similarity_threshold if settings else 0.9
+    max_daily_attendances = settings.max_daily_attendances if settings else 2
     
-    # Check last attendance
-    last_attendance = crud.get_last_attendance_by_student(db, student_id)
+    # Check if similarity score meets threshold
+    if similarity_score < similarity_threshold:
+        print(f"Similarity score {similarity_score} below threshold {similarity_threshold}")
+        return None
     
-    if last_attendance:
-        # Check if enough time has passed
-        time_diff = detected_at - last_attendance.detected_at
-        if time_diff.total_seconds() < (interval_minutes * 60):
-            # Update existing attendance instead of creating new one
-            last_attendance.detected_image_path = detected_image_path
-            last_attendance.similarity_score = similarity_score
-            last_attendance.detected_at = detected_at
+    # Check today's attendance for this student
+    today_attendance = crud.get_attendance_today_by_student(db, student_id)
+    today_count = crud.get_attendances_today_by_student(db, student_id)
+    
+    if today_attendance:
+        # If there's an existing attendance today, check similarity
+        if similarity_score > today_attendance.similarity_score:
+            # Update existing attendance with better similarity
+            today_attendance.detected_image_path = detected_image_path
+            today_attendance.similarity_score = similarity_score
+            today_attendance.detected_at = detected_at
             if gps_latitude is not None:
-                last_attendance.gps_latitude = gps_latitude
+                today_attendance.gps_latitude = gps_latitude
             if gps_longitude is not None:
-                last_attendance.gps_longitude = gps_longitude
+                today_attendance.gps_longitude = gps_longitude
             if gender_detected:
-                last_attendance.gender_detected = gender_detected
+                today_attendance.gender_detected = gender_detected
             
             db.commit()
-            db.refresh(last_attendance)
-            return last_attendance
+            db.refresh(today_attendance)
+            return today_attendance
+        else:
+            # Existing attendance has higher similarity, don't update
+            print(f"Existing attendance has higher similarity ({today_attendance.similarity_score} > {similarity_score})")
+            return today_attendance
+    
+    # Check if max daily attendances reached
+    if today_count >= max_daily_attendances:
+        print(f"Max daily attendances ({max_daily_attendances}) reached for student {student_id}")
+        return None
     
     # Create new attendance record
     attendance = crud.create_attendance(

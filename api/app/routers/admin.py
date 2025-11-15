@@ -208,12 +208,75 @@ async def delete_parent(
 # Student Management
 @router.post("/students", response_model=schemas.StudentResponse, status_code=status.HTTP_201_CREATED)
 async def create_student(
-    student_data: schemas.StudentCreate,
+    name: str = Form(...),
+    age: str = Form(...),
+    gender: str = Form(...),
+    parent_id: str = Form(...),
+    bus_id: Optional[str] = Form(None),
+    home_address: Optional[str] = Form(None),
+    home_latitude: Optional[str] = Form(None),
+    home_longitude: Optional[str] = Form(None),
     face_image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
     """Create a new student with optional face image."""
+    # Convert and validate age
+    try:
+        age_int = int(age)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid age"
+        )
+    
+    # Convert and validate parent_id
+    try:
+        parent_id_int = int(parent_id)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid parent_id"
+        )
+    
+    # Convert bus_id
+    bus_id_int = None
+    if bus_id and bus_id.strip() and bus_id.lower() != 'null' and bus_id != 'none':
+        try:
+            bus_id_int = int(bus_id)
+        except (ValueError, TypeError):
+            bus_id_int = None
+    
+    # Convert home_latitude
+    home_latitude_float = None
+    if home_latitude and home_latitude.strip() and home_latitude.lower() != 'null':
+        try:
+            home_latitude_float = float(home_latitude)
+        except (ValueError, TypeError):
+            home_latitude_float = None
+    
+    # Convert home_longitude
+    home_longitude_float = None
+    if home_longitude and home_longitude.strip() and home_longitude.lower() != 'null':
+        try:
+            home_longitude_float = float(home_longitude)
+        except (ValueError, TypeError):
+            home_longitude_float = None
+    
+    # Convert gender string to enum
+    from app.models import Gender
+    gender_enum = Gender.MALE if gender.lower() == 'male' else Gender.FEMALE
+    
+    student_data = schemas.StudentCreate(
+        name=name,
+        age=age_int,
+        gender=gender_enum,
+        parent_id=parent_id_int,
+        bus_id=bus_id_int,
+        home_address=home_address if home_address and home_address.strip() else None,
+        home_latitude=home_latitude_float,
+        home_longitude=home_longitude_float,
+    )
     student = crud.create_student(db, student_data)
     
     # Handle face image upload if provided
@@ -238,7 +301,7 @@ async def create_student(
         db.commit()
         db.refresh(student)
     
-    return student
+    return schemas.StudentResponse.from_orm_with_url(student)
 
 
 @router.get("/students", response_model=List[schemas.StudentResponse])
@@ -252,7 +315,7 @@ async def get_students(
 ):
     """Get all students with optional filters."""
     students, total = crud.get_all_students(db, skip=skip, limit=limit, bus_id=bus_id, parent_id=parent_id)
-    return students
+    return [schemas.StudentResponse.from_orm_with_url(s) for s in students]
 
 
 @router.get("/students/{student_id}", response_model=schemas.StudentResponse)
@@ -268,19 +331,177 @@ async def get_student(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student not found"
         )
-    return student
+    return schemas.StudentResponse.from_orm_with_url(student)
+
+
+@router.get("/students/{student_id}/tracking")
+async def get_student_tracking(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    """Get student tracking information (for admin)."""
+    student = crud.get_student_by_id(db, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    # Get last attendance
+    last_attendance = crud.get_last_attendance_by_student(db, student_id)
+    
+    # Get bus location if bus exists
+    bus_location = None
+    tracker_active = False
+    if student.bus_id:
+        bus = crud.get_bus_by_id(db, student.bus_id)
+        if bus and bus.gps_tracker_id:
+            tracker = crud.get_gps_tracker_by_id(db, bus.gps_tracker_id)
+            if tracker and tracker.last_latitude and tracker.last_longitude:
+                bus_location = {
+                    "latitude": tracker.last_latitude,
+                    "longitude": tracker.last_longitude,
+                }
+                tracker_active = tracker.is_active
+    
+    # Check if WebSocket is enabled in system settings (this controls real-time tracking)
+    settings = crud.get_system_settings(db)
+    is_active_time = settings.websocket_enabled if settings else True
+    
+    return {
+        "student": schemas.StudentResponse.from_orm_with_url(student),
+        "last_attendance": schemas.AttendanceResponse.from_orm_with_url(last_attendance) if last_attendance else None,
+        "bus": student.bus,
+        "location": bus_location,
+        "tracker_active": tracker_active,
+        "is_active_time": is_active_time,
+    }
+
+
+@router.get("/students/{student_id}/attendance/history")
+async def get_student_attendance_history(
+    student_id: int,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    bus_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    """Get attendance history for a student (admin version with filters)."""
+    student = crud.get_student_by_id(db, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    attendances, total = crud.get_attendance_history(
+        db, student_id=student_id, bus_id=bus_id, start_date=start_date, end_date=end_date, skip=skip, limit=limit
+    )
+    
+    # Convert to response with image_url
+    from app.utils import get_image_url
+    items = []
+    for att in attendances:
+        items.append(schemas.AttendanceResponse.from_orm_with_url(att))
+    
+    return {
+        "total": total,
+        "items": items
+    }
 
 
 @router.put("/students/{student_id}", response_model=schemas.StudentResponse)
 async def update_student(
     student_id: int,
-    student_data: schemas.StudentUpdate,
+    name: Optional[str] = Form(None),
+    age: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    parent_id: Optional[str] = Form(None),
+    bus_id: Optional[str] = Form(None),
+    home_address: Optional[str] = Form(None),
+    home_latitude: Optional[str] = Form(None),
+    home_longitude: Optional[str] = Form(None),
     face_image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
     """Update student."""
-    student = crud.update_student(db, student_id, student_data)
+    # Get existing student
+    student = crud.get_student_by_id(db, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    # Build update data dict
+    update_data = {}
+    
+    if name is not None:
+        update_data["name"] = name
+    
+    if age is not None:
+        try:
+            update_data["age"] = int(age)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid age"
+            )
+    
+    if gender is not None:
+        from app.models import Gender
+        gender_enum = Gender.MALE if gender.lower() == 'male' else Gender.FEMALE
+        update_data["gender"] = gender_enum
+    
+    if parent_id is not None:
+        try:
+            update_data["parent_id"] = int(parent_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid parent_id"
+            )
+    
+    if bus_id is not None:
+        if bus_id.strip() and bus_id.lower() != 'null' and bus_id != 'none':
+            try:
+                update_data["bus_id"] = int(bus_id)
+            except (ValueError, TypeError):
+                update_data["bus_id"] = None
+        else:
+            update_data["bus_id"] = None
+    
+    if home_address is not None:
+        update_data["home_address"] = home_address if home_address.strip() else None
+    
+    if home_latitude is not None:
+        if home_latitude.strip() and home_latitude.lower() != 'null':
+            try:
+                update_data["home_latitude"] = float(home_latitude)
+            except (ValueError, TypeError):
+                update_data["home_latitude"] = None
+        else:
+            update_data["home_latitude"] = None
+    
+    if home_longitude is not None:
+        if home_longitude.strip() and home_longitude.lower() != 'null':
+            try:
+                update_data["home_longitude"] = float(home_longitude)
+            except (ValueError, TypeError):
+                update_data["home_longitude"] = None
+        else:
+            update_data["home_longitude"] = None
+    
+    # Create StudentUpdate schema
+    student_update = schemas.StudentUpdate(**update_data)
+    
+    # Update student
+    student = crud.update_student(db, student_id, student_update)
     if not student:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -308,7 +529,7 @@ async def update_student(
         db.commit()
         db.refresh(student)
     
-    return student
+    return schemas.StudentResponse.from_orm_with_url(student)
 
 
 @router.delete("/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -435,25 +656,26 @@ async def get_attendance_report(
     end_date: Optional[date] = None,
     bus_id: Optional[int] = None,
     student_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin)
 ):
-    """Get attendance report."""
-    query = db.query(models.Attendance)
+    """Get attendance report with filters."""
+    attendances, total = crud.get_attendance_history(
+        db, student_id=student_id, bus_id=bus_id, start_date=start_date, end_date=end_date, skip=skip, limit=limit
+    )
     
-    if start_date:
-        start_ts = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=None)
-        query = query.filter(models.Attendance.detected_at >= start_ts)
-    if end_date:
-        end_ts = datetime.combine(end_date, datetime.max.time()).replace(tzinfo=None)
-        query = query.filter(models.Attendance.detected_at <= end_ts)
-    if bus_id:
-        query = query.filter(models.Attendance.bus_id == bus_id)
-    if student_id:
-        query = query.filter(models.Attendance.student_id == student_id)
+    # Convert to response with image_url
+    from app.utils import get_image_url
+    items = []
+    for att in attendances:
+        items.append(schemas.AttendanceResponse.from_orm_with_url(att))
     
-    attendances = query.order_by(models.Attendance.detected_at.desc()).all()
-    return attendances
+    return {
+        "total": total,
+        "items": items
+    }
 
 
 @router.get("/reports/buses-status")

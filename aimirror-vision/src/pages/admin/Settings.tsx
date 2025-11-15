@@ -21,6 +21,8 @@ const AdminSettings: React.FC = () => {
     default_afternoon_start: '',
     default_afternoon_end: '',
     attendance_interval_minutes: '5',
+    attendance_similarity_threshold: '0.9',
+    max_daily_attendances: '2',
     websocket_enabled: true,
   });
   const [mapCenter, setMapCenter] = useState({ lat: 24.7136, lng: 46.6753 });
@@ -44,6 +46,8 @@ const AdminSettings: React.FC = () => {
         default_afternoon_start: settings.default_afternoon_start || '',
         default_afternoon_end: settings.default_afternoon_end || '',
         attendance_interval_minutes: settings.attendance_interval_minutes?.toString() || '5',
+        attendance_similarity_threshold: settings.attendance_similarity_threshold?.toString() || '0.9',
+        max_daily_attendances: settings.max_daily_attendances?.toString() || '2',
         websocket_enabled: settings.websocket_enabled ?? true,
       });
       if (settings.school_latitude && settings.school_longitude) {
@@ -79,6 +83,8 @@ const AdminSettings: React.FC = () => {
       default_afternoon_start: formData.default_afternoon_start || undefined,
       default_afternoon_end: formData.default_afternoon_end || undefined,
       attendance_interval_minutes: parseInt(formData.attendance_interval_minutes),
+      attendance_similarity_threshold: parseFloat(formData.attendance_similarity_threshold),
+      max_daily_attendances: parseInt(formData.max_daily_attendances),
       websocket_enabled: formData.websocket_enabled,
     };
     updateMutation.mutate(data);
@@ -249,6 +255,34 @@ const AdminSettings: React.FC = () => {
               />
               <p className="text-sm text-muted-foreground mt-1">
                 الحد الأدنى للوقت بين تسجيلين متتاليين للحضور
+              </p>
+            </div>
+            <div>
+              <Label>نسبة التشابه المطلوبة (0.0 - 1.0)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max="1"
+                value={formData.attendance_similarity_threshold}
+                onChange={(e) => setFormData({ ...formData, attendance_similarity_threshold: e.target.value })}
+                required
+              />
+              <p className="text-sm text-muted-foreground mt-1">
+                الحد الأدنى لنسبة التشابه المطلوبة لتسجيل الحضور (افتراضي: 0.9 = 90%)
+              </p>
+            </div>
+            <div>
+              <Label>عدد التحضيرات المسموح في اليوم</Label>
+              <Input
+                type="number"
+                value={formData.max_daily_attendances}
+                onChange={(e) => setFormData({ ...formData, max_daily_attendances: e.target.value })}
+                min="1"
+                required
+              />
+              <p className="text-sm text-muted-foreground mt-1">
+                الحد الأقصى لعدد مرات التحضير المسموح بها لكل طالب في اليوم الواحد (افتراضي: 2)
               </p>
             </div>
             <div className="flex items-center justify-between">
