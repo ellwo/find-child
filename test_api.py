@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Configuration
-API_BASE_URL = "https://ai-mirrors.socialaipilot.com/" #os.getenv("API_BASE_URL", "https://ai-mirrors.socialaipilot.com")
+API_BASE_URL = "http://localhost:8000" #os.getenv("API_BASE_URL", "https://ai-mirrors.socialaipilot.com")
 CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "changeme_camera_api_key")
 
 # Test images directory

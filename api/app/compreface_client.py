@@ -7,11 +7,11 @@ from typing import List, Dict
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from compreface import CompreFace
-from compreface.service import RecognitionService, VerificationService
+from compreface.service import RecognitionService, VerificationService, DetectionService
 
 load_dotenv()
 
-COMPREFACE_URL = os.getenv("COMPREFACE_URL", "http://compreface-api:3000")
+COMPREFACE_URL = os.getenv("COMPREFACE_URL", "http://compreface-api:8080")
 # Separate API keys for different services
 COMPREFACE_VERIFICATION_KEY = os.getenv("COMPREFACE_VERIFICATION_KEY", "")
 COMPREFACE_RECOGNITION_KEY = os.getenv("COMPREFACE_RECOGNITION_KEY", "")
@@ -23,7 +23,7 @@ COMPREFACE_SUBJECT = os.getenv("COMPREFACE_SUBJECT", "faces")
 # CompreFace SDK expects domain (with protocol, without port) and port separately
 parsed_url = urlparse(COMPREFACE_URL)
 compreface_domain = f"{parsed_url.scheme}://{parsed_url.hostname}" if parsed_url.hostname else "http://compreface-api"
-compreface_port = str(parsed_url.port) if parsed_url.port else ("443" if parsed_url.scheme == "https" else "3000")
+compreface_port = str(parsed_url.port) if parsed_url.port else ("443" if parsed_url.scheme == "https" else "8080")
 
 # Initialize CompreFace instance
 _compreface_instance = None
@@ -195,4 +195,36 @@ def compare_faces(face1_path: str, face2_path: str) -> float:
         
     except Exception as e:
         raise Exception(f"Failed to compare faces: {str(e)}")
+
+
+def detect_face(file_path: str) -> bool:
+    """
+    Detect if an image contains at least one face using CompreFace Detection Service.
+    
+    Args:
+        file_path: Path to the image file to check
+    
+    Returns:
+        True if at least one face is detected, False otherwise
+    
+    Raises:
+        Exception: If detection fails
+    """
+    detection = _get_detection_service()
+    
+    try:
+        # Use SDK detect method
+        result = detection.detect(image_path=file_path)
+        
+        # SDK returns: {"result": [{"box": {...}, "landmarks": {...}, ...}, ...]}
+        # or {"result": []} if no faces detected
+        results = result.get("result", [])
+        if not results and isinstance(result, list):
+            results = result
+        
+        # Check if any faces were detected
+        return len(results) > 0
+        
+    except Exception as e:
+        raise Exception(f"Failed to detect face: {str(e)}")
 

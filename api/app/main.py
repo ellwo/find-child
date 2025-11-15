@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List
-from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status
+from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from app import crud, models, schemas
 from app.db import get_db, engine
-from app.compreface_client import index_face, search_face, compare_faces
+from app.compreface_client import index_face, search_face, compare_faces, detect_face
 from app.utils import (
     save_face_image, get_image_url, parse_date, get_today_utc,
     parse_iso_datetime, get_storage_path
@@ -91,7 +91,7 @@ async def health_check(db: Session = Depends(get_db)):
     # Check CompreFace
     try:
         import requests
-        compreface_url = os.getenv("COMPREFACE_URL", "http://compreface-api:3000")
+        compreface_url = os.getenv("COMPREFACE_URL", "http://compreface-api:8080")
         # Try to reach CompreFace API health endpoint
         response = requests.get(f"{compreface_url}/api/v1/status", timeout=5)
         if response.status_code == 200:
@@ -116,8 +116,108 @@ async def health_check(db: Session = Depends(get_db)):
     return health_status
 
 
+def process_image_background(
+    image_data: bytes,
+    camera_id: str,
+    camera_name: Optional[str],
+    parsed_timestamp: datetime,
+    temp_file_path: str
+):
+    """
+    Background job to process uploaded image:
+    1. Check if image contains a face
+    2. If face detected: save to storage, create DB record, and index in CompreFace
+    3. If no face: delete temporary file and ignore
+    """
+    from app.db import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Check if image contains a face
+        has_face = False
+        try:
+            has_face = detect_face(temp_file_path)
+        except Exception as e:
+            print(f"Error detecting face: {str(e)}")
+            # If detection fails, we'll ignore the image to be safe
+            has_face = False
+        
+        if not has_face:
+            # No face detected - delete temporary file and ignore
+            print(f"No face detected in image from camera {camera_id}, ignoring...")
+            try:
+                os.unlink(temp_file_path)
+            except Exception:
+                pass
+            return
+        
+        # Face detected - proceed with saving and indexing
+        print(f"Face detected in image from camera {camera_id}, processing...")
+        
+        # Save image file to permanent storage
+        try:
+            file_path = save_face_image(image_data, camera_id, parsed_timestamp)
+            full_file_path = Path(get_storage_path()) / file_path
+        except Exception as e:
+            print(f"Error saving image: {str(e)}")
+            # Clean up temp file
+            try:
+                os.unlink(temp_file_path)
+            except Exception:
+                pass
+            return
+        
+        # Create or update camera record
+        try:
+            camera = crud.create_or_update_camera(db, camera_id, camera_name)
+        except Exception as e:
+            print(f"Error creating/updating camera: {str(e)}")
+        
+        # Create captured image record (without compreface_face_id initially)
+        try:
+            captured_image = crud.create_captured_image(
+                db=db,
+                camera_id=camera_id,
+                camera_name=camera_name,
+                timestamp=parsed_timestamp,
+                file_path=file_path,
+                compreface_face_id=None
+            )
+        except Exception as e:
+            print(f"Error creating captured image record: {str(e)}")
+            # Clean up saved file
+            try:
+                os.unlink(full_file_path)
+            except Exception:
+                pass
+            return
+        
+        # Index face in CompreFace
+        compreface_face_id = None
+        try:
+            compreface_face_id = index_face(str(full_file_path))
+            # Update the record with compreface_face_id
+            crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
+            print(f"Successfully indexed face with ID: {compreface_face_id}")
+        except Exception as e:
+            # Log error but don't fail - image is saved
+            print(f"Warning: Failed to index face in CompreFace: {str(e)}")
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_file_path)
+        except Exception:
+            pass
+            
+    except Exception as e:
+        print(f"Error in background job: {str(e)}")
+    finally:
+        db.close()
+
+
 @app.post("/api/upload_camera_face", response_model=schemas.UploadResponse)
 async def upload_camera_face(
+    background_tasks: BackgroundTasks,
     camera_id: str = Form(...),
     camera_name: Optional[str] = Form(None),
     timestamp: Optional[str] = Form(None),
@@ -126,7 +226,8 @@ async def upload_camera_face(
     db: Session = Depends(get_db)
 ):
     """
-    Upload a cropped face image from ESP32-CAM.
+    Upload an image from ESP32-CAM.
+    The image will be processed in background: checked for faces, and saved only if a face is detected.
     Requires X-API-KEY header for authentication.
     """
     # Verify API key
@@ -158,47 +259,35 @@ async def upload_camera_face(
             detail="Image file is empty"
         )
     
-    # Save image file
+    # Save image temporarily for background processing
+    temp_file_path = None
     try:
-        file_path = save_face_image(image_data, camera_id, parsed_timestamp)
-        full_file_path = Path(get_storage_path()) / file_path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+            tmp_file.write(image_data)
+            temp_file_path = tmp_file.name
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save image: {str(e)}"
+            detail=f"Failed to save temporary image: {str(e)}"
         )
     
-    # Create or update camera record
-    camera = crud.create_or_update_camera(db, camera_id, camera_name)
-    
-    # Create captured image record (without compreface_face_id initially)
-    captured_image = crud.create_captured_image(
-        db=db,
+    # Add background task to process image (face detection, saving, indexing)
+    background_tasks.add_task(
+        process_image_background,
+        image_data=image_data,
         camera_id=camera_id,
         camera_name=camera_name,
-        timestamp=parsed_timestamp,
-        file_path=file_path,
-        compreface_face_id=None
+        parsed_timestamp=parsed_timestamp,
+        temp_file_path=temp_file_path
     )
     
-    # Index face in CompreFace
-    compreface_face_id = None
-    try:
-        compreface_face_id = index_face(str(full_file_path))
-        # Update the record with compreface_face_id
-        crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
-    except Exception as e:
-        # Log error but don't fail the upload - image is saved
-        print(f"Warning: Failed to index face in CompreFace: {str(e)}")
-    
-    image_url = get_image_url(file_path)
-    
+    # Return immediate response (processing happens in background)
     return schemas.UploadResponse(
-        id=captured_image.id,
-        image_url=image_url,
+        id=0,  # Will be set after background processing
+        image_url="",  # Will be set after background processing
         camera_id=camera_id,
         timestamp=parsed_timestamp,
-        compreface_face_id=compreface_face_id
+        compreface_face_id=None
     )
 
 
