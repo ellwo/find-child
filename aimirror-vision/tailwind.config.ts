@@ -58,6 +58,11 @@ export default {
         'gradient-accent': 'var(--gradient-accent)',
         'gradient-subtle': 'var(--gradient-subtle)',
       },
+      backgroundColor: {
+        'gradient-primary': 'var(--gradient-primary)',
+        'gradient-accent': 'var(--gradient-accent)',
+        'gradient-subtle': 'var(--gradient-subtle)',
+      },
       boxShadow: {
         'glow': 'var(--shadow-glow)',
         'card': 'var(--shadow-card)',

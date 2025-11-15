@@ -93,10 +93,14 @@ def record_attendance(
     """
     Record attendance for a student.
     Implements new logic:
+    - Determines attendance_type based on time (before 12:00 = ENTRY, after = EXIT)
     - Checks similarity threshold from settings (default 0.9)
-    - Checks max daily attendances from settings (default 2)
-    - Only updates if new similarity is higher than existing
+    - Checks max daily attendances per type from settings (default 2)
+    - Only updates if new similarity is higher than existing for same type
     """
+    # Determine attendance type based on time (before 12:00 = ENTRY, after = EXIT)
+    attendance_type = models.AttendanceType.ENTRY if detected_at.hour < 12 else models.AttendanceType.EXIT
+    
     # Get system settings
     settings = crud.get_system_settings(db)
     similarity_threshold = settings.attendance_similarity_threshold if settings else 0.9
@@ -107,12 +111,12 @@ def record_attendance(
         print(f"Similarity score {similarity_score} below threshold {similarity_threshold}")
         return None
     
-    # Check today's attendance for this student
-    today_attendance = crud.get_attendance_today_by_student(db, student_id)
-    today_count = crud.get_attendances_today_by_student(db, student_id)
+    # Check today's attendance for this student and attendance type
+    today_attendance = crud.get_attendance_today_by_student_and_type(db, student_id, attendance_type)
+    today_count_by_type = crud.get_attendances_today_by_student_and_type(db, student_id, attendance_type)
     
     if today_attendance:
-        # If there's an existing attendance today, check similarity
+        # If there's an existing attendance today for this type, check similarity
         if similarity_score > today_attendance.similarity_score:
             # Update existing attendance with better similarity
             today_attendance.detected_image_path = detected_image_path
@@ -133,9 +137,9 @@ def record_attendance(
             print(f"Existing attendance has higher similarity ({today_attendance.similarity_score} > {similarity_score})")
             return today_attendance
     
-    # Check if max daily attendances reached
-    if today_count >= max_daily_attendances:
-        print(f"Max daily attendances ({max_daily_attendances}) reached for student {student_id}")
+    # Check if max daily attendances reached for this type
+    if today_count_by_type >= max_daily_attendances:
+        print(f"Max daily attendances ({max_daily_attendances}) reached for student {student_id} type {attendance_type.value}")
         return None
     
     # Create new attendance record
@@ -146,6 +150,7 @@ def record_attendance(
         detected_image_path=detected_image_path,
         similarity_score=similarity_score,
         detected_at=detected_at,
+        attendance_type=attendance_type,
         gps_latitude=gps_latitude,
         gps_longitude=gps_longitude,
         gender_detected=gender_detected

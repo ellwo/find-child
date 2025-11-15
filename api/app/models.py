@@ -19,6 +19,12 @@ class Gender(str, enum.Enum):
     FEMALE = "female"
 
 
+class AttendanceType(str, enum.Enum):
+    """Attendance type enumeration."""
+    ENTRY = "entry"  # دخول
+    EXIT = "exit"    # خروج
+
+
 class SystemSettings(Base):
     """System settings model - stores general system configuration."""
     __tablename__ = "system_settings"
@@ -154,6 +160,7 @@ class Attendance(Base):
     detected_image_path = Column(String, nullable=False)
     similarity_score = Column(Float, nullable=False)
     detected_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    attendance_type = Column(SQLEnum(AttendanceType), nullable=True, index=True)  # ENTRY or EXIT
     gps_latitude = Column(Float, nullable=True)
     gps_longitude = Column(Float, nullable=True)
     gender_detected = Column(SQLEnum(Gender), nullable=True)

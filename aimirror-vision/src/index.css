@@ -80,9 +80,9 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 215 25% 15%;
 
-    --primary: 195 100% 50%;
+    --primary: 220 100% 50%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 195 100% 65%;
+    --primary-glow: 220 100% 60%;
 
     --secondary: 210 20% 95%;
     --secondary-foreground: 215 25% 15%;
@@ -90,7 +90,7 @@ All colors MUST be HSL.
     --muted: 210 20% 95%;
     --muted-foreground: 215 16% 50%;
 
-    --accent: 275 100% 65%;
+    --accent: 220 100% 45%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
@@ -98,15 +98,15 @@ All colors MUST be HSL.
 
     --border: 215 15% 90%;
     --input: 215 15% 90%;
-    --ring: 195 100% 50%;
+    --ring: 220 100% 50%;
 
     --radius: 0.75rem;
 
-    --gradient-primary: linear-gradient(135deg, hsl(195 100% 50%), hsl(220 100% 60%));
-    --gradient-accent: linear-gradient(135deg, hsl(275 100% 65%), hsl(195 100% 50%));
-    --gradient-subtle: linear-gradient(180deg, hsl(210 25% 98%), hsl(210 20% 96%));
+    --gradient-primary: hsl(220 100% 50%);
+    --gradient-accent: hsl(220 100% 45%);
+    --gradient-subtle: hsl(210 25% 98%);
     
-    --shadow-glow: 0 0 40px hsla(195, 100%, 50%, 0.15);
+    --shadow-glow: 0 0 40px hsla(220, 100%, 50%, 0.15);
     --shadow-card: 0 4px 24px hsla(215, 25%, 15%, 0.08);
     --shadow-elevated: 0 8px 32px hsla(215, 25%, 15%, 0.12);
   }
@@ -121,9 +121,9 @@ All colors MUST be HSL.
     --popover: 220 20% 12%;
     --popover-foreground: 210 20% 95%;
 
-    --primary: 195 100% 55%;
+    --primary: 220 100% 55%;
     --primary-foreground: 220 25% 8%;
-    --primary-glow: 195 100% 70%;
+    --primary-glow: 220 100% 65%;
 
     --secondary: 220 20% 16%;
     --secondary-foreground: 210 20% 95%;
@@ -131,7 +131,7 @@ All colors MUST be HSL.
     --muted: 220 20% 16%;
     --muted-foreground: 215 15% 65%;
 
-    --accent: 275 100% 70%;
+    --accent: 220 100% 50%;
     --accent-foreground: 220 25% 8%;
 
     --destructive: 0 70% 55%;
@@ -139,13 +139,13 @@ All colors MUST be HSL.
 
     --border: 220 15% 20%;
     --input: 220 15% 20%;
-    --ring: 195 100% 55%;
+    --ring: 220 100% 55%;
 
-    --gradient-primary: linear-gradient(135deg, hsl(195 100% 55%), hsl(220 100% 65%));
-    --gradient-accent: linear-gradient(135deg, hsl(275 100% 70%), hsl(195 100% 55%));
-    --gradient-subtle: linear-gradient(180deg, hsl(220 25% 8%), hsl(220 20% 10%));
+    --gradient-primary: hsl(220 100% 55%);
+    --gradient-accent: hsl(220 100% 50%);
+    --gradient-subtle: hsl(220 25% 8%);
     
-    --shadow-glow: 0 0 60px hsla(195, 100%, 55%, 0.25);
+    --shadow-glow: 0 0 60px hsla(220, 100%, 55%, 0.25);
     --shadow-card: 0 4px 24px hsla(0, 0%, 0%, 0.4);
     --shadow-elevated: 0 8px 32px hsla(0, 0%, 0%, 0.6);
   }
@@ -187,6 +187,24 @@ All colors MUST be HSL.
 
   .glow-effect {
     box-shadow: var(--shadow-glow);
+  }
+
+  /* Responsive utilities */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Touch-friendly tap targets */
+  @media (max-width: 768px) {
+    button, a, [role="button"] {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 }
 

@@ -364,6 +364,7 @@ def create_attendance(
     detected_image_path: str,
     similarity_score: float,
     detected_at: datetime,
+    attendance_type: Optional[models.AttendanceType] = None,
     gps_latitude: Optional[float] = None,
     gps_longitude: Optional[float] = None,
     gender_detected: Optional[models.Gender] = None
@@ -375,6 +376,7 @@ def create_attendance(
         detected_image_path=detected_image_path,
         similarity_score=similarity_score,
         detected_at=detected_at,
+        attendance_type=attendance_type,
         gps_latitude=gps_latitude,
         gps_longitude=gps_longitude,
         gender_detected=gender_detected
@@ -459,6 +461,82 @@ def get_attendance_today_by_student(db: Session, student_id: int) -> Optional[mo
             models.Attendance.detected_at <= end_ts
         )
     ).order_by(models.Attendance.detected_at.desc()).first()
+
+
+def get_attendances_today_by_student_and_type(
+    db: Session, 
+    student_id: int, 
+    attendance_type: models.AttendanceType
+) -> int:
+    """Get count of attendances today for a specific student and attendance type."""
+    today = datetime.utcnow().date()
+    start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=None)
+    end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=None)
+    return db.query(models.Attendance).filter(
+        and_(
+            models.Attendance.student_id == student_id,
+            models.Attendance.attendance_type == attendance_type,
+            models.Attendance.detected_at >= start_ts,
+            models.Attendance.detected_at <= end_ts
+        )
+    ).count()
+
+
+def get_attendance_today_by_student_and_type(
+    db: Session, 
+    student_id: int, 
+    attendance_type: models.AttendanceType
+) -> Optional[models.Attendance]:
+    """Get today's attendance record for a specific student and attendance type (if exists)."""
+    today = datetime.utcnow().date()
+    start_ts = datetime.combine(today, datetime.min.time()).replace(tzinfo=None)
+    end_ts = datetime.combine(today, datetime.max.time()).replace(tzinfo=None)
+    return db.query(models.Attendance).filter(
+        and_(
+            models.Attendance.student_id == student_id,
+            models.Attendance.attendance_type == attendance_type,
+            models.Attendance.detected_at >= start_ts,
+            models.Attendance.detected_at <= end_ts
+        )
+    ).order_by(models.Attendance.detected_at.desc()).first()
+
+
+def get_student_route_from_attendance(
+    db: Session,
+    attendance_id: int,
+    include_after: bool = True
+) -> List[models.GPSLog]:
+    """
+    Get GPS route points for a student based on attendance record.
+    Returns GPS logs from attendance time until school (for ENTRY) or home (for EXIT).
+    """
+    attendance = db.query(models.Attendance).filter(models.Attendance.id == attendance_id).first()
+    if not attendance:
+        return []
+    
+    bus = get_bus_by_id(db, attendance.bus_id)
+    if not bus or not bus.gps_tracker_id:
+        return []
+    
+    # Get GPS logs from attendance time onwards
+    start_time = attendance.detected_at
+    
+    # For ENTRY: get route until school (or end of day)
+    # For EXIT: get route until student's home (or end of day)
+    if attendance.attendance_type == models.AttendanceType.ENTRY:
+        # Get route until school or end of day
+        end_time = datetime.combine(start_time.date(), datetime.max.time()).replace(tzinfo=None)
+    else:  # EXIT
+        # Get route until student's home or end of day
+        end_time = datetime.combine(start_time.date(), datetime.max.time()).replace(tzinfo=None)
+    
+    gps_logs = get_gps_logs_by_bus(db, bus.id, start_time, end_time)
+    
+    # Filter logs to only include those after attendance time
+    if include_after:
+        return [log for log in gps_logs if log.timestamp >= start_time]
+    else:
+        return gps_logs
 
 
 # GPS Log CRUD

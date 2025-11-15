@@ -1,5 +1,5 @@
 {
-  "appName": "AI Mirror",
+  "appName": "Safe Journey System",
   "nav": {
     "dashboard": "Dashboard",
     "cameras": "Cameras",
@@ -8,7 +8,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
-    "welcome": "Welcome to AI Mirror",
+    "welcome": "Welcome to Safe Journey System",
     "totalCameras": "Total Cameras",
     "totalImages": "Total Images",
     "recentActivity": "Recent Activity",

@@ -70,9 +70,32 @@ const App = () => (
             <Routes>
               {/* Public routes */}
               <Route path="/" element={<Layout><Dashboard /></Layout>} />
-              <Route path="/cameras" element={<Layout><Cameras /></Layout>} />
-              <Route path="/saved-images" element={<Layout><SavedImages /></Layout>} />
-              <Route path="/search" element={<Layout><Search /></Layout>} />
+              
+              {/* Protected routes - require authentication (admin or parent) */}
+              <Route
+                path="/cameras"
+                element={
+                  <ProtectedRoute>
+                    <Layout><Cameras /></Layout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/saved-images"
+                element={
+                  <ProtectedRoute>
+                    <Layout><SavedImages /></Layout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/search"
+                element={
+                  <ProtectedRoute>
+                    <Layout><Search /></Layout>
+                  </ProtectedRoute>
+                }
+              />
 
               {/* Admin routes */}
               <Route path="/admin/login" element={<AdminLogin />} />

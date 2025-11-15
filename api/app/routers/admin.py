@@ -379,6 +379,61 @@ async def get_student_tracking(
     }
 
 
+@router.get("/students/{student_id}/routes")
+async def get_student_routes(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    """Get all routes (entry and exit) for a student."""
+    student = crud.get_student_by_id(db, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    # Get entry and exit attendances for today
+    entry_attendance = crud.get_attendance_today_by_student_and_type(db, student_id, models.AttendanceType.ENTRY)
+    exit_attendance = crud.get_attendance_today_by_student_and_type(db, student_id, models.AttendanceType.EXIT)
+    
+    routes = {}
+    
+    if entry_attendance:
+        entry_route = crud.get_student_route_from_attendance(db, entry_attendance.id)
+        routes["entry"] = {
+            "attendance_id": entry_attendance.id,
+            "detected_at": entry_attendance.detected_at,
+            "route_points": [
+                {
+                    "latitude": log.latitude,
+                    "longitude": log.longitude,
+                    "timestamp": log.timestamp,
+                    "is_near_school": log.is_near_school
+                }
+                for log in entry_route
+            ]
+        }
+    
+    if exit_attendance:
+        exit_route = crud.get_student_route_from_attendance(db, exit_attendance.id)
+        routes["exit"] = {
+            "attendance_id": exit_attendance.id,
+            "detected_at": exit_attendance.detected_at,
+            "route_points": [
+                {
+                    "latitude": log.latitude,
+                    "longitude": log.longitude,
+                    "timestamp": log.timestamp,
+                    "is_near_school": log.is_near_school
+                }
+                for log in exit_route
+            ]
+        }
+    
+    return routes
+
+
 @router.get("/students/{student_id}/attendance/history")
 async def get_student_attendance_history(
     student_id: int,

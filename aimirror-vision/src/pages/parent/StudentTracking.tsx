@@ -8,6 +8,7 @@ import {
   getAttendanceHistory,
   getBusLocation,
   getRouteHistory,
+  getRouteByAttendance,
 } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,7 +26,8 @@ const ParentStudentTracking: React.FC = () => {
   const studentId = parseInt(id || '0');
 
   const [busLocation, setBusLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [routeHistory, setRouteHistory] = useState<any[]>([]);
+  const [entryRoute, setEntryRoute] = useState<any[]>([]);
+  const [exitRoute, setExitRoute] = useState<any[]>([]);
 
   const { data: student, isLoading: studentLoading } = useQuery({
     queryKey: ['student', studentId],
@@ -63,17 +65,26 @@ const ParentStudentTracking: React.FC = () => {
 
   useEffect(() => {
     if (studentId && student?.bus_id) {
-      const today = new Date();
-      const startTime = new Date(today.setHours(0, 0, 0, 0));
-      const endTime = new Date();
-
+      // Get entry route
       getRouteHistory(studentId, {
-        start_time: startTime.toISOString(),
-        end_time: endTime.toISOString(),
+        attendance_type: 'entry',
       }).then((data) => {
         if (data.route_points) {
-          setRouteHistory(data.route_points);
+          setEntryRoute(data.route_points);
         }
+      }).catch(() => {
+        setEntryRoute([]);
+      });
+
+      // Get exit route
+      getRouteHistory(studentId, {
+        attendance_type: 'exit',
+      }).then((data) => {
+        if (data.route_points) {
+          setExitRoute(data.route_points);
+        }
+      }).catch(() => {
+        setExitRoute([]);
       });
     }
   }, [studentId, student?.bus_id]);
@@ -137,6 +148,9 @@ const ParentStudentTracking: React.FC = () => {
     ? { lat: student.home_latitude, lng: student.home_longitude }
     : { lat: 24.7136, lng: 46.6753 });
 
+  // Get school location from settings (if available)
+  const schoolLocation = { lat: 24.7136, lng: 46.6753 }; // Default, should be from settings
+
   const markers = [];
   if (busLocation) {
     markers.push({
@@ -144,21 +158,48 @@ const ParentStudentTracking: React.FC = () => {
       lng: busLocation.lng,
       label: 'الحافلة',
       info: `الحافلة: ${student.bus?.bus_number || ''}`,
+      iconType: 'bus' as const,
     });
   }
   if (student.home_latitude && student.home_longitude) {
     markers.push({
       lat: student.home_latitude,
       lng: student.home_longitude,
-      label: 'المنزل',
+      label: student.name,
       info: 'منزل الطالب',
+      iconType: 'student' as const,
+      imageUrl: student.image_url,
     });
   }
+  // Add school marker
+  markers.push({
+    lat: schoolLocation.lat,
+    lng: schoolLocation.lng,
+    label: 'المدرسة',
+    info: 'المدرسة',
+    iconType: 'school' as const,
+  });
 
-  const routePoints = routeHistory.map((point) => ({
-    lat: point.latitude,
-    lng: point.longitude,
-  }));
+  // Prepare routes with types
+  const routes = [];
+  if (entryRoute.length > 0) {
+    routes.push({
+      points: entryRoute.map((point: any) => ({
+        lat: point.latitude,
+        lng: point.longitude,
+      })),
+      type: 'entry' as const,
+    });
+  }
+  if (exitRoute.length > 0) {
+    routes.push({
+      points: exitRoute.map((point: any) => ({
+        lat: point.latitude,
+        lng: point.longitude,
+      })),
+      type: 'exit' as const,
+    });
+  }
 
   return (
     <div className="space-y-6 animate-slide-up">
@@ -243,7 +284,7 @@ const ParentStudentTracking: React.FC = () => {
                         center={mapCenter}
                         zoom={15}
                         markers={markers}
-                        route={routePoints.length > 1 ? routePoints : undefined}
+                        route={routes.length > 0 ? routes : undefined}
                         height="400px"
                       />
                     </div>

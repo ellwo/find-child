@@ -167,10 +167,12 @@ async def get_route_history(
     student_id: int,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
+    attendance_id: Optional[int] = None,
+    attendance_type: Optional[str] = None,  # "entry" or "exit"
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_parent)
 ):
-    """Get route history for a student's bus."""
+    """Get route history for a student's bus. Can filter by attendance_id or attendance_type."""
     student = crud.get_student_by_id(db, student_id)
     if not student:
         raise HTTPException(
@@ -197,6 +199,46 @@ async def get_route_history(
             detail="Bus or GPS tracker not found"
         )
     
+    # If attendance_id is provided, get route from that attendance
+    if attendance_id:
+        gps_logs = crud.get_student_route_from_attendance(db, attendance_id)
+        return {
+            "bus_id": bus.id,
+            "bus_number": bus.bus_number,
+            "attendance_id": attendance_id,
+            "route_points": [
+                {
+                    "latitude": log.latitude,
+                    "longitude": log.longitude,
+                    "timestamp": log.timestamp,
+                    "is_near_school": log.is_near_school
+                }
+                for log in gps_logs
+            ]
+        }
+    
+    # If attendance_type is provided, get route from latest attendance of that type
+    if attendance_type:
+        att_type = models.AttendanceType.ENTRY if attendance_type.lower() == "entry" else models.AttendanceType.EXIT
+        attendance = crud.get_attendance_today_by_student_and_type(db, student_id, att_type)
+        if attendance:
+            gps_logs = crud.get_student_route_from_attendance(db, attendance.id)
+            return {
+                "bus_id": bus.id,
+                "bus_number": bus.bus_number,
+                "attendance_id": attendance.id,
+                "attendance_type": attendance_type,
+                "route_points": [
+                    {
+                        "latitude": log.latitude,
+                        "longitude": log.longitude,
+                        "timestamp": log.timestamp,
+                        "is_near_school": log.is_near_school
+                    }
+                    for log in gps_logs
+                ]
+            }
+    
     # Default to today if no time range provided
     if not start_time:
         start_time = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -208,6 +250,56 @@ async def get_route_history(
     return {
         "bus_id": bus.id,
         "bus_number": bus.bus_number,
+        "route_points": [
+            {
+                "latitude": log.latitude,
+                "longitude": log.longitude,
+                "timestamp": log.timestamp,
+                "is_near_school": log.is_near_school
+            }
+            for log in gps_logs
+        ]
+    }
+
+
+@router.get("/students/{student_id}/route/{attendance_id}")
+async def get_route_by_attendance(
+    student_id: int,
+    attendance_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_parent)
+):
+    """Get route for a specific attendance record."""
+    student = crud.get_student_by_id(db, student_id)
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found"
+        )
+    
+    if student.parent_id != current_user.id and current_user.role != models.UserRole.SYSTEM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this student"
+        )
+    
+    attendance = db.query(models.Attendance).filter(
+        models.Attendance.id == attendance_id,
+        models.Attendance.student_id == student_id
+    ).first()
+    
+    if not attendance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attendance not found"
+        )
+    
+    gps_logs = crud.get_student_route_from_attendance(db, attendance_id)
+    
+    return {
+        "attendance_id": attendance_id,
+        "attendance_type": attendance.attendance_type.value if attendance.attendance_type else None,
+        "detected_at": attendance.detected_at,
         "route_points": [
             {
                 "latitude": log.latitude,

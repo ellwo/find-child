@@ -136,6 +136,11 @@ async def startup_event():
         migrate_settings()
     except Exception as e:
         print(f"Warning: Migration failed (may already be applied): {str(e)}")
+    try:
+        from app.migrate_attendance_type import migrate_attendance_type
+        migrate_attendance_type()
+    except Exception as e:
+        print(f"Warning: Attendance type migration failed (may already be applied): {str(e)}")
     
     # Start Redis subscriber in background
     asyncio.create_task(redis_subscriber())

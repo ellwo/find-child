@@ -4,7 +4,7 @@ Pydantic schemas for request/response validation.
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, EmailStr
-from app.models import UserRole, Gender
+from app.models import UserRole, Gender, AttendanceType
 
 
 # Authentication Schemas
@@ -249,6 +249,7 @@ class AttendanceResponse(BaseModel):
     detected_image_path: str
     similarity_score: float
     detected_at: datetime
+    attendance_type: Optional[AttendanceType] = None  # ENTRY or EXIT
     gps_latitude: Optional[float] = None
     gps_longitude: Optional[float] = None
     gender_detected: Optional[Gender] = None
@@ -271,6 +272,7 @@ class AttendanceResponse(BaseModel):
             "detected_image_path": obj.detected_image_path,
             "similarity_score": obj.similarity_score,
             "detected_at": obj.detected_at,
+            "attendance_type": obj.attendance_type,
             "gps_latitude": obj.gps_latitude,
             "gps_longitude": obj.gps_longitude,
             "gender_detected": obj.gender_detected,

@@ -1,11 +1,17 @@
 import axios from 'axios';
 
-// Get API base URL from environment or use relative path
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+// Get API base URL from environment
+// In development, use /api which will be proxied by Vite
+// In production, use VITE_API_BASE_URL directly
+const API_BASE_URL = import.meta.env.DEV 
+  ? "" 
+  : (import.meta.env.VITE_API_BASE_URL || "");
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    "Access-Control-Allow-Origin": "*",
   },
 });
 
@@ -259,8 +265,24 @@ export const getBusLocation = async (studentId: number) => {
   return response.data;
 };
 
-export const getRouteHistory = async (studentId: number, params?: { start_time?: string; end_time?: string }) => {
+export const getRouteHistory = async (studentId: number, params?: { 
+  start_time?: string; 
+  end_time?: string;
+  attendance_id?: number;
+  attendance_type?: 'entry' | 'exit';
+}) => {
   const response = await api.get(`/api/parent/students/${studentId}/route-history`, { params });
+  return response.data;
+};
+
+export const getRouteByAttendance = async (studentId: number, attendanceId: number) => {
+  const response = await api.get(`/api/parent/students/${studentId}/route/${attendanceId}`);
+  return response.data;
+};
+
+// Admin APIs - Student Routes
+export const getStudentRoutes = async (studentId: number) => {
+  const response = await api.get(`/api/admin/students/${studentId}/routes`);
   return response.data;
 };
 

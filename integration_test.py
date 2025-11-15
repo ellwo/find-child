@@ -112,6 +112,9 @@ TEST_STUDENTS = [
         "home_address": "حي قصر الرياض",
         "home_latitude": 24.7154,
         "home_longitude": 46.6840,
+        "parent_index": 0,  # Parent 1 (same parent as Omar)
+        "bus_index": 0,  # Bus 1
+        "pickup_order": 1,  # First pickup for Bus 1
     },
     {
         "name": "Sara",
@@ -120,6 +123,9 @@ TEST_STUDENTS = [
         "home_address": "حي النرجس",
         "home_latitude": 24.7200,
         "home_longitude": 46.6900,
+        "parent_index": 1,  # Parent 2
+        "bus_index": 1,  # Bus 2
+        "pickup_order": 1,  # First pickup for Bus 2
     },
     {
         "name": "Omar",
@@ -128,6 +134,9 @@ TEST_STUDENTS = [
         "home_address": "حي العليا",
         "home_latitude": 24.7100,
         "home_longitude": 46.6800,
+        "parent_index": 0,  # Parent 1 (same parent as Khalid - brothers)
+        "bus_index": 0,  # Bus 1 (same bus as Khalid)
+        "pickup_order": 2,  # Second pickup for Bus 1 (after Khalid)
     },
 ]
 
@@ -451,9 +460,12 @@ class IntegrationTest:
         print_step(8, "Creating Students")
         try:
             for i, student_data in enumerate(TEST_STUDENTS):
-                # Assign parent and bus
-                parent_id = self.created_ids["parents"][i % len(self.created_ids["parents"])]["id"]
-                bus_id = self.created_ids["buses"][i % len(self.created_ids["buses"])]["id"] if self.created_ids["buses"] else None
+                # Assign parent and bus based on student configuration
+                parent_index = student_data.get("parent_index", i % len(self.created_ids["parents"]))
+                bus_index = student_data.get("bus_index", i % len(self.created_ids["buses"]))
+                
+                parent_id = self.created_ids["parents"][parent_index]["id"] if parent_index < len(self.created_ids["parents"]) else self.created_ids["parents"][0]["id"]
+                bus_id = self.created_ids["buses"][bus_index]["id"] if bus_index < len(self.created_ids["buses"]) and self.created_ids["buses"] else None
                 
                 # Create face image
                 face_image = self.create_test_face_image(student_data["name"], i)
@@ -487,8 +499,12 @@ class IntegrationTest:
                 if response.status_code == 201:
                     student = response.json()
                     self.created_ids["students"].append(student)
+                    bus_number = f"Bus {bus_index + 1}" if bus_id else "None"
+                    parent_name = TEST_PARENTS[parent_index]["full_name"] if parent_index < len(TEST_PARENTS) else "Unknown"
                     print_success(f"Created student: {student_data['name']} (ID: {student['id']})")
-                    print_info(f"  - Parent ID: {parent_id}, Bus ID: {bus_id}")
+                    print_info(f"  - Parent: {parent_name} (ID: {parent_id}), Bus: {bus_number} (ID: {bus_id})")
+                    if student_data.get("pickup_order"):
+                        print_info(f"  - Pickup order: {student_data['pickup_order']}")
                 else:
                     print_error(f"Failed to create student {student_data['name']}: {response.status_code}")
                     print_error(f"Response: {response.text}")
@@ -500,22 +516,121 @@ class IntegrationTest:
             return False
     
     def test_gps_updates(self):
-        """Simulate GPS location updates."""
+        """Simulate realistic GPS location updates for buses - morning (entry) and afternoon (exit) trips."""
         print_step(9, "Simulating GPS Location Updates")
         try:
+            school_lat = TEST_SCHOOL_LOCATION["latitude"]
+            school_lon = TEST_SCHOOL_LOCATION["longitude"]
+            
+            # Morning trip (ENTRY) - starts at 07:00
+            morning_start = datetime.now(timezone.utc).replace(hour=7, minute=0, second=0, microsecond=0)
+            
+            # Afternoon trip (EXIT) - starts at 15:00
+            afternoon_start = datetime.now(timezone.utc).replace(hour=15, minute=0, second=0, microsecond=0)
+            
             for i, tracker in enumerate(self.created_ids["trackers"]):
-                # Simulate route from home to school
-                home_lat = TEST_STUDENTS[i % len(TEST_STUDENTS)]["home_latitude"]
-                home_lon = TEST_STUDENTS[i % len(TEST_STUDENTS)]["home_longitude"]
-                school_lat = TEST_SCHOOL_LOCATION["latitude"]
-                school_lon = TEST_SCHOOL_LOCATION["longitude"]
+                # Get all students assigned to this bus
+                bus_students = [
+                    (idx, student) for idx, student in enumerate(TEST_STUDENTS)
+                    if student.get("bus_index", idx % len(self.created_ids["buses"])) == i
+                ]
                 
-                # Create intermediate points
-                num_points = 5
-                for j in range(num_points + 1):
+                # Sort students by pickup order
+                bus_students.sort(key=lambda x: x[1].get("pickup_order", 1))
+                
+                if not bus_students:
+                    print_info(f"No students assigned to bus {i+1}, skipping GPS updates")
+                    continue
+                
+                # Print route summary
+                student_names = [s[1]["name"] for s in bus_students]
+                route_str = " → ".join([f"{name}'s home" for name in student_names] + ["School"])
+                print_info(f"Bus {i+1} route: {route_str}")
+                
+                # MORNING TRIP (ENTRY) - Pick up students and go to school
+                print_info(f"\n=== Bus {i+1} - Morning Trip (ENTRY) ===")
+                current_time = morning_start
+                
+                # Start from first student's home
+                current_lat = bus_students[0][1]["home_latitude"]
+                current_lon = bus_students[0][1]["home_longitude"]
+                
+                # Send initial position (at first student's home)
+                response = requests.post(
+                    f"{self.api_base}/api/device/gps/update",
+                    json={
+                        "device_id": tracker["device_id"],
+                        "latitude": current_lat,
+                        "longitude": current_lon,
+                        "timestamp": current_time.isoformat()
+                    },
+                    headers={
+                        "X-API-KEY": GPS_DEVICE_API_KEY,
+                        "Content-Type": "application/json"
+                    }
+                )
+                if response.status_code == 200:
+                    print_success(f"Bus {i+1} at {bus_students[0][1]['name']}'s home")
+                    time.sleep(0.3)
+                
+                # Move to each subsequent student's home
+                for student_idx, (orig_idx, student) in enumerate(bus_students[1:], start=1):
+                    target_lat = student["home_latitude"]
+                    target_lon = student["home_longitude"]
+                    
+                    # Create intermediate points between current position and next student's home
+                    num_points = 4
+                    for j in range(1, num_points + 1):
+                        ratio = j / num_points
+                        lat = current_lat + (target_lat - current_lat) * ratio
+                        lon = current_lon + (target_lon - current_lon) * ratio
+                        current_time += timedelta(seconds=30)  # 30 seconds between points
+                        
+                        response = requests.post(
+                            f"{self.api_base}/api/device/gps/update",
+                            json={
+                                "device_id": tracker["device_id"],
+                                "latitude": lat,
+                                "longitude": lon,
+                                "timestamp": current_time.isoformat()
+                            },
+                            headers={
+                                "X-API-KEY": GPS_DEVICE_API_KEY,
+                                "Content-Type": "application/json"
+                            }
+                        )
+                        if response.status_code == 200:
+                            print_success(f"Bus {i+1} moving to {student['name']}'s home ({j}/{num_points})")
+                            time.sleep(0.3)
+                    
+                    # Arrive at student's home
+                    current_lat = target_lat
+                    current_lon = target_lon
+                    current_time += timedelta(seconds=30)
+                    response = requests.post(
+                        f"{self.api_base}/api/device/gps/update",
+                        json={
+                            "device_id": tracker["device_id"],
+                            "latitude": current_lat,
+                            "longitude": current_lon,
+                            "timestamp": current_time.isoformat()
+                        },
+                        headers={
+                            "X-API-KEY": GPS_DEVICE_API_KEY,
+                            "Content-Type": "application/json"
+                        }
+                    )
+                    if response.status_code == 200:
+                        print_success(f"Bus {i+1} arrived at {student['name']}'s home")
+                        time.sleep(0.5)  # Wait at pickup location
+                
+                # Now move from last pickup to school
+                num_points = 6
+                for j in range(1, num_points + 1):
                     ratio = j / num_points
-                    lat = home_lat + (school_lat - home_lat) * ratio
-                    lon = home_lon + (school_lon - home_lon) * ratio
+                    lat = current_lat + (school_lat - current_lat) * ratio
+                    lon = current_lon + (school_lon - current_lon) * ratio
+                    current_time += timedelta(seconds=45)  # 45 seconds between points
                     
                     response = requests.post(
                         f"{self.api_base}/api/device/gps/update",
@@ -523,65 +638,227 @@ class IntegrationTest:
                             "device_id": tracker["device_id"],
                             "latitude": lat,
                             "longitude": lon,
-                            "timestamp": datetime.now(timezone.utc).isoformat()
+                            "timestamp": current_time.isoformat()
                         },
                         headers={
                             "X-API-KEY": GPS_DEVICE_API_KEY,
                             "Content-Type": "application/json"
                         }
                     )
-                    
                     if response.status_code == 200:
-                        print_success(f"GPS update {j+1}/{num_points+1} for {tracker['device_id']}")
-                        time.sleep(0.5)  # Small delay between updates
-                    else:
-                        print_error(f"GPS update failed: {response.status_code}")
-                        print_error(f"Response: {response.text}")
+                        print_success(f"Bus {i+1} heading to school ({j}/{num_points})")
+                        time.sleep(0.3)
+                
+                # Arrive at school
+                current_time += timedelta(seconds=45)
+                response = requests.post(
+                    f"{self.api_base}/api/device/gps/update",
+                    json={
+                        "device_id": tracker["device_id"],
+                        "latitude": school_lat,
+                        "longitude": school_lon,
+                        "timestamp": current_time.isoformat()
+                    },
+                    headers={
+                        "X-API-KEY": GPS_DEVICE_API_KEY,
+                        "Content-Type": "application/json"
+                    }
+                )
+                if response.status_code == 200:
+                    print_success(f"Bus {i+1} arrived at school (morning trip)")
+                    time.sleep(0.5)
+                
+                # AFTERNOON TRIP (EXIT) - Start from school, drop off students
+                print_info(f"\n=== Bus {i+1} - Afternoon Trip (EXIT) ===")
+                current_time = afternoon_start
+                current_lat = school_lat
+                current_lon = school_lon
+                
+                # Start from school
+                response = requests.post(
+                    f"{self.api_base}/api/device/gps/update",
+                    json={
+                        "device_id": tracker["device_id"],
+                        "latitude": current_lat,
+                        "longitude": current_lon,
+                        "timestamp": current_time.isoformat()
+                    },
+                    headers={
+                        "X-API-KEY": GPS_DEVICE_API_KEY,
+                        "Content-Type": "application/json"
+                    }
+                )
+                if response.status_code == 200:
+                    print_success(f"Bus {i+1} leaving school")
+                    time.sleep(0.3)
+                
+                # Drop off students in reverse order
+                for student_idx, (orig_idx, student) in enumerate(reversed(bus_students), start=1):
+                    target_lat = student["home_latitude"]
+                    target_lon = student["home_longitude"]
+                    
+                    # Create intermediate points
+                    num_points = 4
+                    for j in range(1, num_points + 1):
+                        ratio = j / num_points
+                        lat = current_lat + (target_lat - current_lat) * ratio
+                        lon = current_lon + (target_lon - current_lon) * ratio
+                        current_time += timedelta(seconds=30)
+                        
+                        response = requests.post(
+                            f"{self.api_base}/api/device/gps/update",
+                            json={
+                                "device_id": tracker["device_id"],
+                                "latitude": lat,
+                                "longitude": lon,
+                                "timestamp": current_time.isoformat()
+                            },
+                            headers={
+                                "X-API-KEY": GPS_DEVICE_API_KEY,
+                                "Content-Type": "application/json"
+                            }
+                        )
+                        if response.status_code == 200:
+                            print_success(f"Bus {i+1} heading to {student['name']}'s home ({j}/{num_points})")
+                            time.sleep(0.3)
+                    
+                    # Arrive at student's home
+                    current_lat = target_lat
+                    current_lon = target_lon
+                    current_time += timedelta(seconds=30)
+                    response = requests.post(
+                        f"{self.api_base}/api/device/gps/update",
+                        json={
+                            "device_id": tracker["device_id"],
+                            "latitude": current_lat,
+                            "longitude": current_lon,
+                            "timestamp": current_time.isoformat()
+                        },
+                        headers={
+                            "X-API-KEY": GPS_DEVICE_API_KEY,
+                            "Content-Type": "application/json"
+                        }
+                    )
+                    if response.status_code == 200:
+                        print_success(f"Bus {i+1} arrived at {student['name']}'s home (afternoon trip)")
+                        time.sleep(0.5)
             
             return True
         except Exception as e:
             print_error(f"GPS updates error: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def test_camera_uploads(self):
-        """Simulate camera face uploads."""
+        """Simulate camera face uploads for students - entry (morning) and exit (afternoon) attendance."""
         print_step(10, "Simulating Camera Face Uploads")
         try:
-            for i, camera in enumerate(TEST_CAMERAS):
-                # Get a student from the bus
-                if i < len(self.created_ids["students"]):
-                    student = self.created_ids["students"][i]
-                    
-                    # Create test image
-                    face_image = self.create_test_face_image(student["name"], i)
-                    
-                    # Upload face image (use PNG if original is PNG)
-                    image_ext = "png" if i < 4 else "jpeg"
-                    image_mime = f"image/{image_ext}"
-                    files = {
-                        "image": (f"face_{student['name']}.{image_ext}", face_image, image_mime)
-                    }
-                    data = {
-                        "camera_id": camera["camera_id"],
-                        "camera_name": camera["name"],
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    }
-                    
-                    response = requests.post(
-                        f"{self.api_base}/api/upload_camera_face",
-                        data=data,
-                        files=files,
-                        headers={"X-API-KEY": CAMERA_API_KEY}
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        print_success(f"Face upload from {camera['name']} successful")
-                        print_info(f"  - Image URL: {result.get('image_url', 'N/A')}")
-                        time.sleep(1)  # Small delay
-                    else:
-                        print_error(f"Face upload failed: {response.status_code}")
-                        print_error(f"Response: {response.text}")
+            # Morning attendance (ENTRY) - around 07:00-08:00
+            morning_time = datetime.now(timezone.utc).replace(hour=7, minute=30, second=0, microsecond=0)
+            
+            # Afternoon attendance (EXIT) - around 15:00-16:00
+            afternoon_time = datetime.now(timezone.utc).replace(hour=15, minute=30, second=0, microsecond=0)
+            
+            # MORNING UPLOADS (ENTRY)
+            print_info("\n=== Morning Attendance (ENTRY) ===")
+            for i, student_data in enumerate(TEST_STUDENTS):
+                if i >= len(self.created_ids["students"]):
+                    continue
+                
+                student = self.created_ids["students"][i]
+                bus_index = student_data.get("bus_index", i % len(TEST_CAMERAS))
+                
+                if bus_index >= len(TEST_CAMERAS):
+                    print_error(f"No camera for bus {bus_index + 1}")
+                    continue
+                
+                camera = TEST_CAMERAS[bus_index]
+                
+                # Create test image using the student's face image
+                face_image = self.create_test_face_image(student_data["name"], i)
+                
+                # Upload face image (use PNG if original is PNG)
+                image_ext = "png" if i < 4 else "jpeg"
+                image_mime = f"image/{image_ext}"
+                files = {
+                    "image": (f"face_{student_data['name']}_entry.{image_ext}", face_image, image_mime)
+                }
+                # Use morning time for entry attendance
+                upload_time = morning_time + timedelta(minutes=i * 2)  # Stagger uploads
+                data = {
+                    "camera_id": camera["camera_id"],
+                    "camera_name": camera["name"],
+                    "timestamp": upload_time.isoformat()
+                }
+                
+                response = requests.post(
+                    f"{self.api_base}/api/upload_camera_face",
+                    data=data,
+                    files=files,
+                    headers={"X-API-KEY": CAMERA_API_KEY}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    print_success(f"Entry attendance for {student_data['name']} from {camera['name']} successful")
+                    print_info(f"  - Image URL: {result.get('image_url', 'N/A')}")
+                    print_info(f"  - Time: {upload_time.strftime('%H:%M:%S')}")
+                    time.sleep(1)  # Small delay between uploads
+                else:
+                    print_error(f"Face upload failed for {student_data['name']}: {response.status_code}")
+                    print_error(f"Response: {response.text}")
+            
+            # Wait a bit before afternoon uploads
+            time.sleep(2)
+            
+            # AFTERNOON UPLOADS (EXIT)
+            print_info("\n=== Afternoon Attendance (EXIT) ===")
+            for i, student_data in enumerate(TEST_STUDENTS):
+                if i >= len(self.created_ids["students"]):
+                    continue
+                
+                student = self.created_ids["students"][i]
+                bus_index = student_data.get("bus_index", i % len(TEST_CAMERAS))
+                
+                if bus_index >= len(TEST_CAMERAS):
+                    continue
+                
+                camera = TEST_CAMERAS[bus_index]
+                
+                # Create test image using the student's face image
+                face_image = self.create_test_face_image(student_data["name"], i)
+                
+                # Upload face image
+                image_ext = "png" if i < 4 else "jpeg"
+                image_mime = f"image/{image_ext}"
+                files = {
+                    "image": (f"face_{student_data['name']}_exit.{image_ext}", face_image, image_mime)
+                }
+                # Use afternoon time for exit attendance
+                upload_time = afternoon_time + timedelta(minutes=i * 2)  # Stagger uploads
+                data = {
+                    "camera_id": camera["camera_id"],
+                    "camera_name": camera["name"],
+                    "timestamp": upload_time.isoformat()
+                }
+                
+                response = requests.post(
+                    f"{self.api_base}/api/upload_camera_face",
+                    data=data,
+                    files=files,
+                    headers={"X-API-KEY": CAMERA_API_KEY}
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    print_success(f"Exit attendance for {student_data['name']} from {camera['name']} successful")
+                    print_info(f"  - Image URL: {result.get('image_url', 'N/A')}")
+                    print_info(f"  - Time: {upload_time.strftime('%H:%M:%S')}")
+                    time.sleep(1)  # Small delay between uploads
+                else:
+                    print_error(f"Face upload failed for {student_data['name']}: {response.status_code}")
+                    print_error(f"Response: {response.text}")
             
             return True
         except Exception as e:
@@ -976,6 +1253,12 @@ def main():
     print(f"{Colors.ENDC}")
     print_info(f"API Base URL: {API_BASE_URL}")
     print_info(f"Admin Email: {ADMIN_EMAIL}")
+    print()
+    print(f"{Colors.OKCYAN}{Colors.BOLD}Test Scenario:{Colors.ENDC}")
+    print(f"  • {Colors.BOLD}Khalid{Colors.ENDC} & {Colors.BOLD}Omar{Colors.ENDC} - Brothers (same parent) - {Colors.BOLD}Bus 1{Colors.ENDC}")
+    print(f"    Route: Khalid's home → Omar's home → School")
+    print(f"  • {Colors.BOLD}Sara{Colors.ENDC} - {Colors.BOLD}Bus 2{Colors.ENDC}")
+    print(f"    Route: Sara's home → School")
     print()
     
     # Create test instance
