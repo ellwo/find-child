@@ -59,7 +59,7 @@ services:
       - CONNECTION_TIMEOUT=${connection_timeout:-10000}
       - READ_TIMEOUT=${read_timeout:-60000}
     ports:
-      - "8080:8080"
+      - "8086:8080"
     networks:
       - faces_network
 
@@ -93,7 +93,7 @@ services:
     image: ${registry:-exadel/}compreface-fe:${FE_VERSION:-1.2.0}
     container_name: "compreface-ui"
     ports:
-      - "8001:80"
+      - "8007:80"
     depends_on:
       - compreface-api
       - compreface-admin
