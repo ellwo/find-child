@@ -278,7 +278,12 @@ def process_image_background(
                             compare_with_reports_background(captured_image, compreface_face_id)
                     except Exception as e:
                         print(f"Error in fallback single face processing: {str(e)}")
-                    continue
+                    # Clean up temp directory and return
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except Exception:
+                        pass
+                    return
                 
                 # Process each extracted face
                 for face_idx, face_path in enumerate(extracted_face_paths):
