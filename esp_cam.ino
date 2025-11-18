@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <time.h>
 
 //
 // WARNING!!! Make sure that you have either selected ESP32 Wrover Module,
@@ -26,8 +27,16 @@ void startCameraServer();
 const char* BACKEND_UPLOAD_URL = "https://ai-mirrors.socialaipilot.com/api/upload_camera_face";
 const char* CAMERA_API_KEY = "changeme_camera_api_key";
 const char* CAMERA_ID = "mall_cam_01";
+const char* CAMERA_NAME = "Mall Entrance Camera";  // Optional camera name
 const unsigned long UPLOAD_INTERVAL_MS = 5000;
 unsigned long lastUploadMillis = 0;
+
+// ---------------- Location and place information ----------------
+// Update these values according to your camera location
+const float CAMERA_LATITUDE = 24.7136;      // Example: Riyadh coordinates
+const float CAMERA_LONGITUDE = 46.6753;     // Example: Riyadh coordinates
+const char* PLACE_NAME = "Riyadh Park Mall"; // Name of the location
+const char* CAMERA_DESCRIPTION = "Main entrance camera - Captures faces at mall entrance"; // Description
 
 // ---------------- Timestamp helper ----------------
 String getTimestampISO() {
@@ -45,17 +54,54 @@ bool uploadImage(const uint8_t* image_buf, size_t image_len) {
     if (WiFi.status() != WL_CONNECTED) return false;
 
     HTTPClient http;
-    http.setTimeout(10000); // 10s timeout
+    http.setTimeout(30000); // 30s timeout for large images
     String boundary = "----ESP32CAMBoundary";
     http.begin(BACKEND_UPLOAD_URL);
     http.addHeader("X-API-KEY", CAMERA_API_KEY);
     http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
 
+    // Build multipart form data
     String bodyStart = "";
+    
+    // camera_id (required)
     bodyStart += "--" + boundary + "\r\n";
     bodyStart += "Content-Disposition: form-data; name=\"camera_id\"\r\n\r\n" + String(CAMERA_ID) + "\r\n";
+    
+    // camera_name (optional)
+    if (strlen(CAMERA_NAME) > 0) {
+        bodyStart += "--" + boundary + "\r\n";
+        bodyStart += "Content-Disposition: form-data; name=\"camera_name\"\r\n\r\n" + String(CAMERA_NAME) + "\r\n";
+    }
+    
+    // timestamp (optional)
     bodyStart += "--" + boundary + "\r\n";
     bodyStart += "Content-Disposition: form-data; name=\"timestamp\"\r\n\r\n" + getTimestampISO() + "\r\n";
+    
+    // latitude (optional)
+    char latStr[20];
+    dtostrf(CAMERA_LATITUDE, 8, 6, latStr); // Format: 8 digits total, 6 decimal places
+    bodyStart += "--" + boundary + "\r\n";
+    bodyStart += "Content-Disposition: form-data; name=\"latitude\"\r\n\r\n" + String(latStr) + "\r\n";
+    
+    // longitude (optional)
+    char lonStr[20];
+    dtostrf(CAMERA_LONGITUDE, 8, 6, lonStr); // Format: 8 digits total, 6 decimal places
+    bodyStart += "--" + boundary + "\r\n";
+    bodyStart += "Content-Disposition: form-data; name=\"longitude\"\r\n\r\n" + String(lonStr) + "\r\n";
+    
+    // place_name (optional)
+    if (strlen(PLACE_NAME) > 0) {
+        bodyStart += "--" + boundary + "\r\n";
+        bodyStart += "Content-Disposition: form-data; name=\"place_name\"\r\n\r\n" + String(PLACE_NAME) + "\r\n";
+    }
+    
+    // description (optional)
+    if (strlen(CAMERA_DESCRIPTION) > 0) {
+        bodyStart += "--" + boundary + "\r\n";
+        bodyStart += "Content-Disposition: form-data; name=\"description\"\r\n\r\n" + String(CAMERA_DESCRIPTION) + "\r\n";
+    }
+    
+    // image file (required)
     bodyStart += "--" + boundary + "\r\n";
     bodyStart += "Content-Disposition: form-data; name=\"image\"; filename=\"" + String(CAMERA_ID) + "_" + String(millis()) + ".jpg\"\r\n";
     bodyStart += "Content-Type: image/jpeg\r\n\r\n";
@@ -64,18 +110,28 @@ bool uploadImage(const uint8_t* image_buf, size_t image_len) {
 
     size_t fullLen = bodyStart.length() + image_len + bodyEnd.length();
     uint8_t* payload = (uint8_t*)malloc(fullLen);
-    if (!payload) return false;
+    if (!payload) {
+        Serial.println("Failed to allocate memory for payload");
+        return false;
+    }
 
-    memcpy(payload, bodyStart.c_str(), bodyStart.length());
-    memcpy(payload + bodyStart.length(), image_buf, image_len);
-    memcpy(payload + bodyStart.length() + image_len, bodyEnd.c_str(), bodyEnd.length());
+    // Copy all parts to payload
+    size_t offset = 0;
+    memcpy(payload + offset, bodyStart.c_str(), bodyStart.length());
+    offset += bodyStart.length();
+    memcpy(payload + offset, image_buf, image_len);
+    offset += image_len;
+    memcpy(payload + offset, bodyEnd.c_str(), bodyEnd.length());
 
+    Serial.printf("Uploading image: %u bytes, total payload: %u bytes\n", (unsigned int)image_len, (unsigned int)fullLen);
+    
     int httpCode = http.sendRequest("POST", payload, fullLen);
     free(payload);
 
     if (httpCode > 0) {
         Serial.printf("Upload HTTP code: %d\n", httpCode);
-        Serial.println("Response: " + http.getString());
+        String response = http.getString();
+        Serial.println("Response: " + response);
         http.end();
         return (httpCode >= 200 && httpCode < 300);
     } else {
@@ -154,6 +210,22 @@ void setup() {
     Serial.print(".");
   }
   Serial.println("\nWiFi connected");
+
+  // Configure NTP time
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.println("Waiting for NTP time sync...");
+  time_t now = time(nullptr);
+  int retries = 0;
+  while (now < 1000000000 && retries < 20) { // Wait for valid timestamp
+    delay(500);
+    now = time(nullptr);
+    retries++;
+  }
+  if (now >= 1000000000) {
+    Serial.println("NTP time synchronized");
+  } else {
+    Serial.println("NTP time sync failed, using system time");
+  }
 
   startCameraServer(); // Keep your original call
 
