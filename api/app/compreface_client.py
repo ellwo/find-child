@@ -3,9 +3,12 @@ CompreFace API client using the official CompreFace Python SDK.
 """
 import os
 import time
+import tempfile
 from typing import List, Dict
+from pathlib import Path
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from PIL import Image
 from compreface import CompreFace
 from compreface.service import RecognitionService, VerificationService, DetectionService
 
@@ -227,4 +230,155 @@ def detect_face(file_path: str) -> bool:
         
     except Exception as e:
         raise Exception(f"Failed to detect face: {str(e)}")
+
+
+def detect_all_faces(file_path: str) -> List[Dict]:
+    """
+    Detect all faces in an image and return their coordinates.
+    
+    Args:
+        file_path: Path to the image file to check
+    
+    Returns:
+        List of dicts, each containing:
+        - "box": {"x_min": int, "y_min": int, "x_max": int, "y_max": int}
+        - "confidence": float (if available)
+    
+    Raises:
+        Exception: If detection fails
+    """
+    detection = _get_detection_service()
+    
+    try:
+        # Use SDK detect method
+        result = detection.detect(image_path=file_path)
+        
+        # SDK returns: {"result": [{"box": {...}, "landmarks": {...}, ...}, ...]}
+        # or {"result": []} if no faces detected
+        results = result.get("result", [])
+        if not results and isinstance(result, list):
+            results = result
+        
+        # Extract face coordinates
+        faces = []
+        for face_data in results:
+            box = face_data.get("box", {})
+            if not box:
+                continue
+            
+            # CompreFace may return coordinates in different formats:
+            # Format 1: x_min, y_min, x_max, y_max
+            # Format 2: x, y, width, height
+            x_min = None
+            y_min = None
+            x_max = None
+            y_max = None
+            
+            if "x_min" in box and "y_min" in box and "x_max" in box and "y_max" in box:
+                # Format 1: Direct coordinates
+                x_min = int(box.get("x_min", 0))
+                y_min = int(box.get("y_min", 0))
+                x_max = int(box.get("x_max", 0))
+                y_max = int(box.get("y_max", 0))
+            elif "x" in box and "y" in box and "width" in box and "height" in box:
+                # Format 2: x, y, width, height
+                x = int(box.get("x", 0))
+                y = int(box.get("y", 0))
+                width = int(box.get("width", 0))
+                height = int(box.get("height", 0))
+                x_min = x
+                y_min = y
+                x_max = x + width
+                y_max = y + height
+            else:
+                # Try to extract from any available format
+                print(f"Warning: Unknown box format: {box}")
+                continue
+            
+            if x_min is not None and y_min is not None and x_max is not None and y_max is not None:
+                faces.append({
+                    "box": {
+                        "x_min": x_min,
+                        "y_min": y_min,
+                        "x_max": x_max,
+                        "y_max": y_max
+                    },
+                    "confidence": float(box.get("probability", 0.0)) if "probability" in box else None
+                })
+        
+        return faces
+        
+    except Exception as e:
+        raise Exception(f"Failed to detect faces: {str(e)}")
+
+
+def extract_faces_from_image(image_path: str, faces: List[Dict], output_dir: str = None) -> List[str]:
+    """
+    Extract individual faces from an image based on detected face coordinates.
+    
+    Args:
+        image_path: Path to the original image
+        faces: List of face dictionaries with "box" coordinates
+        output_dir: Directory to save extracted faces (default: temp directory)
+    
+    Returns:
+        List of paths to extracted face images
+    
+    Raises:
+        Exception: If extraction fails
+    """
+    if not faces:
+        return []
+    
+    try:
+        # Open the original image
+        img = Image.open(image_path)
+        img_width, img_height = img.size
+        
+        # Create output directory if not provided
+        if output_dir is None:
+            output_dir = tempfile.mkdtemp()
+        else:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        extracted_faces = []
+        
+        for idx, face in enumerate(faces):
+            box = face.get("box", {})
+            x_min = max(0, box.get("x_min", 0))
+            y_min = max(0, box.get("y_min", 0))
+            x_max = min(img_width, box.get("x_max", img_width))
+            y_max = min(img_height, box.get("y_max", img_height))
+            
+            # Ensure valid coordinates
+            if x_max <= x_min or y_max <= y_min:
+                print(f"Warning: Invalid face coordinates for face {idx}, skipping...")
+                continue
+            
+            # Add padding (10% of face size)
+            width = x_max - x_min
+            height = y_max - y_min
+            padding_x = int(width * 0.1)
+            padding_y = int(height * 0.1)
+            
+            x_min = max(0, x_min - padding_x)
+            y_min = max(0, y_min - padding_y)
+            x_max = min(img_width, x_max + padding_x)
+            y_max = min(img_height, y_max + padding_y)
+            
+            # Crop the face
+            face_img = img.crop((x_min, y_min, x_max, y_max))
+            
+            # Save the cropped face
+            base_name = Path(image_path).stem
+            output_path = os.path.join(output_dir, f"{base_name}_face_{idx}.jpg")
+            face_img.save(output_path, "JPEG", quality=95)
+            
+            extracted_faces.append(output_path)
+            print(f"Extracted face {idx} to {output_path}")
+        
+        return extracted_faces
+        
+    except Exception as e:
+        raise Exception(f"Failed to extract faces from image: {str(e)}")
 

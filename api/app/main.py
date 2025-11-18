@@ -3,6 +3,7 @@ FastAPI main application with all endpoints.
 """
 import os
 import tempfile
+import shutil
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 
 from app import crud, models, schemas
 from app.db import get_db, engine
-from app.compreface_client import index_face, search_face, compare_faces, detect_face
+from app.compreface_client import index_face, search_face, compare_faces, detect_face, detect_all_faces, extract_faces_from_image
 from app.auth import authenticate_user, create_access_token, get_current_user, get_current_system_user
 from app.utils import (
     save_face_image, get_image_url, parse_date, get_today_utc,
@@ -205,24 +206,25 @@ def process_image_background(
 ):
     """
     Background job to process uploaded image:
-    1. Check if image contains a face
-    2. If face detected: save to storage, create DB record, and index in CompreFace
-    3. If no face: delete temporary file and ignore
+    1. Detect all faces in the image
+    2. If multiple faces: extract each face and process separately
+    3. If single face: process normally
+    4. If no face: delete temporary file and ignore
     """
     from app.db import SessionLocal
     
     db = SessionLocal()
     try:
-        # Check if image contains a face
-        has_face = False
+        # Detect all faces in the image
+        detected_faces = []
         try:
-            has_face = detect_face(temp_file_path)
+            detected_faces = detect_all_faces(temp_file_path)
         except Exception as e:
-            print(f"Error detecting face: {str(e)}")
+            print(f"Error detecting faces: {str(e)}")
             # If detection fails, we'll ignore the image to be safe
-            has_face = False
+            detected_faces = []
         
-        if not has_face:
+        if not detected_faces:
             # No face detected - delete temporary file and ignore
             print(f"No face detected in image from camera {camera_id}, ignoring...")
             try:
@@ -231,21 +233,8 @@ def process_image_background(
                 pass
             return
         
-        # Face detected - proceed with saving and indexing
-        print(f"Face detected in image from camera {camera_id}, processing...")
-        
-        # Save image file to permanent storage
-        try:
-            file_path = save_face_image(image_data, camera_id, parsed_timestamp)
-            full_file_path = Path(get_storage_path()) / file_path
-        except Exception as e:
-            print(f"Error saving image: {str(e)}")
-            # Clean up temp file
-            try:
-                os.unlink(temp_file_path)
-            except Exception:
-                pass
-            return
+        num_faces = len(detected_faces)
+        print(f"Detected {num_faces} face(s) in image from camera {camera_id}")
         
         # Create or update camera record
         try:
@@ -253,43 +242,176 @@ def process_image_background(
         except Exception as e:
             print(f"Error creating/updating camera: {str(e)}")
         
-        # Create captured image record (without compreface_face_id initially)
-        try:
-            captured_image = crud.create_captured_image(
-                db=db,
-                camera_id=camera_id,
-                camera_name=camera_name,
-                timestamp=parsed_timestamp,
-                file_path=file_path,
-                compreface_face_id=None,
-                latitude=latitude,
-                longitude=longitude,
-                place_name=place_name,
-                description=description
-            )
-        except Exception as e:
-            print(f"Error creating captured image record: {str(e)}")
-            # Clean up saved file
-            try:
-                os.unlink(full_file_path)
-            except Exception:
-                pass
-            return
-        
-        # Index face in CompreFace
-        compreface_face_id = None
-        try:
-            compreface_face_id = index_face(str(full_file_path))
-            # Update the record with compreface_face_id
-            crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
-            print(f"Successfully indexed face with ID: {compreface_face_id}")
+        # Process each face separately
+        if num_faces > 1:
+            # Multiple faces detected - extract and process each face
+            print(f"Multiple faces detected ({num_faces}), extracting individual faces...")
             
-            # Compare with reports in background
-            if compreface_face_id:
-                compare_with_reports_background(captured_image, compreface_face_id)
-        except Exception as e:
-            # Log error but don't fail - image is saved
-            print(f"Warning: Failed to index face in CompreFace: {str(e)}")
+            # Create temp directory for extracted faces
+            temp_dir = tempfile.mkdtemp()
+            
+            try:
+                # Extract all faces from the image
+                extracted_face_paths = extract_faces_from_image(temp_file_path, detected_faces, temp_dir)
+                
+                if not extracted_face_paths:
+                    print(f"Warning: Failed to extract faces from image, processing original image as single face")
+                    # Fallback to single face processing - save original image and process it
+                    try:
+                        original_file_path = save_face_image(image_data, camera_id, parsed_timestamp)
+                        original_full_path = Path(get_storage_path()) / original_file_path
+                        
+                        compreface_face_id = index_face(str(original_full_path))
+                        captured_image = crud.create_captured_image(
+                            db=db,
+                            camera_id=camera_id,
+                            camera_name=camera_name,
+                            timestamp=parsed_timestamp,
+                            file_path=original_file_path,
+                            compreface_face_id=compreface_face_id,
+                            latitude=latitude,
+                            longitude=longitude,
+                            place_name=place_name,
+                            description=description
+                        )
+                        if compreface_face_id:
+                            compare_with_reports_background(captured_image, compreface_face_id)
+                    except Exception as e:
+                        print(f"Error in fallback single face processing: {str(e)}")
+                    continue
+                
+                # Process each extracted face
+                for face_idx, face_path in enumerate(extracted_face_paths):
+                    try:
+                        # Read the extracted face image
+                        with open(face_path, 'rb') as f:
+                            face_image_data = f.read()
+                        
+                        # Save extracted face to permanent storage
+                        face_file_path = save_face_image(
+                            face_image_data, 
+                            camera_id, 
+                            parsed_timestamp,
+                            suffix=f"_face_{face_idx}"
+                        )
+                        face_full_path = Path(get_storage_path()) / face_file_path
+                        
+                        # Create captured image record for this face
+                        captured_image = crud.create_captured_image(
+                            db=db,
+                            camera_id=camera_id,
+                            camera_name=camera_name,
+                            timestamp=parsed_timestamp,
+                            file_path=face_file_path,
+                            compreface_face_id=None,
+                            latitude=latitude,
+                            longitude=longitude,
+                            place_name=place_name,
+                            description=description
+                        )
+                        
+                        # Index face in CompreFace
+                        compreface_face_id = None
+                        try:
+                            compreface_face_id = index_face(str(face_full_path))
+                            crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
+                            print(f"Successfully indexed face {face_idx} with ID: {compreface_face_id}")
+                            
+                            # Compare with reports in background
+                            if compreface_face_id:
+                                compare_with_reports_background(captured_image, compreface_face_id)
+                        except Exception as e:
+                            print(f"Warning: Failed to index face {face_idx} in CompreFace: {str(e)}")
+                            # Continue with next face even if indexing fails
+                        
+                    except Exception as e:
+                        print(f"Error processing face {face_idx}: {str(e)}")
+                        # Continue with next face
+                        continue
+                
+                # Clean up extracted faces from temp directory
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    print(f"Warning: Failed to clean up temp directory: {str(e)}")
+                    
+            except Exception as e:
+                print(f"Error extracting faces: {str(e)}")
+                # Fallback: try to process original image as single face
+                try:
+                    # Save original image
+                    original_file_path = save_face_image(image_data, camera_id, parsed_timestamp)
+                    original_full_path = Path(get_storage_path()) / original_file_path
+                    
+                    compreface_face_id = index_face(str(original_full_path))
+                    # Create a single record for the original image
+                    captured_image = crud.create_captured_image(
+                        db=db,
+                        camera_id=camera_id,
+                        camera_name=camera_name,
+                        timestamp=parsed_timestamp,
+                        file_path=original_file_path,
+                        compreface_face_id=compreface_face_id,
+                        latitude=latitude,
+                        longitude=longitude,
+                        place_name=place_name,
+                        description=description
+                    )
+                    if compreface_face_id:
+                        compare_with_reports_background(captured_image, compreface_face_id)
+                except Exception as e2:
+                    print(f"Error in fallback processing: {str(e2)}")
+        else:
+            # Single face detected - process normally
+            print(f"Single face detected, processing normally...")
+            
+            # Save original image file to permanent storage
+            try:
+                original_file_path = save_face_image(image_data, camera_id, parsed_timestamp)
+                original_full_path = Path(get_storage_path()) / original_file_path
+            except Exception as e:
+                print(f"Error saving original image: {str(e)}")
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
+                return
+            
+            # Create captured image record
+            try:
+                captured_image = crud.create_captured_image(
+                    db=db,
+                    camera_id=camera_id,
+                    camera_name=camera_name,
+                    timestamp=parsed_timestamp,
+                    file_path=original_file_path,
+                    compreface_face_id=None,
+                    latitude=latitude,
+                    longitude=longitude,
+                    place_name=place_name,
+                    description=description
+                )
+            except Exception as e:
+                print(f"Error creating captured image record: {str(e)}")
+                try:
+                    os.unlink(original_full_path)
+                except Exception:
+                    pass
+                return
+            
+            # Index face in CompreFace
+            compreface_face_id = None
+            try:
+                compreface_face_id = index_face(str(original_full_path))
+                crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
+                print(f"Successfully indexed face with ID: {compreface_face_id}")
+                
+                # Compare with reports in background
+                if compreface_face_id:
+                    compare_with_reports_background(captured_image, compreface_face_id)
+            except Exception as e:
+                # Log error but don't fail - image is saved
+                print(f"Warning: Failed to index face in CompreFace: {str(e)}")
         
         # Clean up temporary file
         try:
@@ -299,6 +421,8 @@ def process_image_background(
             
     except Exception as e:
         print(f"Error in background job: {str(e)}")
+        import traceback
+        traceback.print_exc()
     finally:
         db.close()
 
@@ -724,15 +848,15 @@ async def create_missing_report(
             detail=f"Failed to save temporary image: {str(e)}"
         )
     
-    # Check if image contains a face
-    has_face = False
+    # Detect all faces in the image
+    detected_faces = []
     try:
-        has_face = detect_face(temp_file_path)
+        detected_faces = detect_all_faces(temp_file_path)
     except Exception as e:
-        print(f"Error detecting face: {str(e)}")
-        has_face = False
+        print(f"Error detecting faces: {str(e)}")
+        detected_faces = []
     
-    if not has_face:
+    if not detected_faces:
         # Clean up temp file
         try:
             os.unlink(temp_file_path)
@@ -740,29 +864,86 @@ async def create_missing_report(
             pass
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Image must contain a face"
+            detail="Image must contain at least one face"
         )
     
-    # Save child photo
-    try:
-        photo_path = save_face_image(image_data, "reports", datetime.utcnow())
-        full_photo_path = Path(get_storage_path()) / photo_path
-    except Exception as e:
-        try:
-            os.unlink(temp_file_path)
-        except Exception:
-            pass
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save image: {str(e)}"
-        )
-    
-    # Index face in CompreFace
+    # If multiple faces detected, extract the largest face (or first one)
+    photo_path = None
+    full_photo_path = None
     compreface_face_id = None
-    try:
-        compreface_face_id = index_face(str(full_photo_path))
-    except Exception as e:
-        print(f"Warning: Failed to index face in CompreFace: {str(e)}")
+    
+    if len(detected_faces) > 1:
+        print(f"Multiple faces detected ({len(detected_faces)}) in child photo, extracting largest face...")
+        
+        # Find the largest face (by area)
+        largest_face = None
+        largest_area = 0
+        for face in detected_faces:
+            box = face.get("box", {})
+            area = (box.get("x_max", 0) - box.get("x_min", 0)) * (box.get("y_max", 0) - box.get("y_min", 0))
+            if area > largest_area:
+                largest_area = area
+                largest_face = face
+        
+        if largest_face:
+            # Extract the largest face
+            temp_dir = tempfile.mkdtemp()
+            try:
+                extracted_faces = extract_faces_from_image(temp_file_path, [largest_face], temp_dir)
+                if extracted_faces:
+                    # Read the extracted face
+                    with open(extracted_faces[0], 'rb') as f:
+                        face_image_data = f.read()
+                    
+                    # Save the extracted face
+                    photo_path = save_face_image(face_image_data, "reports", datetime.utcnow())
+                    full_photo_path = Path(get_storage_path()) / photo_path
+                    
+                    # Index the extracted face
+                    try:
+                        compreface_face_id = index_face(str(full_photo_path))
+                    except Exception as e:
+                        print(f"Warning: Failed to index extracted face in CompreFace: {str(e)}")
+                    
+                    # Clean up temp directory
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except Exception:
+                        pass
+                else:
+                    # Fallback to original image
+                    photo_path = save_face_image(image_data, "reports", datetime.utcnow())
+                    full_photo_path = Path(get_storage_path()) / photo_path
+            except Exception as e:
+                print(f"Error extracting face: {str(e)}")
+                # Fallback to original image
+                photo_path = save_face_image(image_data, "reports", datetime.utcnow())
+                full_photo_path = Path(get_storage_path()) / photo_path
+        else:
+            # Fallback to original image
+            photo_path = save_face_image(image_data, "reports", datetime.utcnow())
+            full_photo_path = Path(get_storage_path()) / photo_path
+    else:
+        # Single face - save original image
+        try:
+            photo_path = save_face_image(image_data, "reports", datetime.utcnow())
+            full_photo_path = Path(get_storage_path()) / photo_path
+        except Exception as e:
+            try:
+                os.unlink(temp_file_path)
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save image: {str(e)}"
+            )
+    
+    # Index face in CompreFace if not already indexed
+    if not compreface_face_id:
+        try:
+            compreface_face_id = index_face(str(full_photo_path))
+        except Exception as e:
+            print(f"Warning: Failed to index face in CompreFace: {str(e)}")
     
     # Create report
     try:

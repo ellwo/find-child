@@ -19,16 +19,22 @@ def get_storage_path() -> str:
     return os.getenv("STORAGE_PATH", "/data/storage")
 
 
-def save_face_image(image_data: bytes, camera_id: str, timestamp: Optional[datetime] = None) -> str:
+def save_face_image(image_data: bytes, camera_id: str, timestamp: Optional[datetime] = None, suffix: str = "") -> str:
     """
     Save face image to storage with organized directory structure.
     Returns the relative file path.
+    
+    Args:
+        image_data: Image bytes to save
+        camera_id: Camera identifier
+        timestamp: Timestamp for the image (default: current time)
+        suffix: Optional suffix to add to filename (e.g., "_face_0")
     """
     if timestamp is None:
         timestamp = datetime.utcnow()
     
     storage_base = get_storage_path()
-    # Create path: faces/YYYY/MM/DD/camera_id/HHMMSS_random.jpg
+    # Create path: faces/YYYY/MM/DD/camera_id/HHMMSS_random[suffix].jpg
     year = timestamp.strftime("%Y")
     month = timestamp.strftime("%M")
     day = timestamp.strftime("%d")
@@ -38,7 +44,7 @@ def save_face_image(image_data: bytes, camera_id: str, timestamp: Optional[datet
     file_dir = Path(storage_base) / "faces" / year / month / day / camera_id
     file_dir.mkdir(parents=True, exist_ok=True)
     
-    filename = f"{time_str}_{random_str}.jpg"
+    filename = f"{time_str}_{random_str}{suffix}.jpg"
     file_path = file_dir / filename
     
     with open(file_path, "wb") as f:
