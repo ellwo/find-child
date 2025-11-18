@@ -22,6 +22,7 @@ import AdminSettings from "./pages/admin/Settings";
 import AdminLiveTracking from "./pages/admin/LiveTracking";
 import AdminStudentTracking from "./pages/admin/StudentTracking";
 import AdminAttendance from "./pages/admin/Attendance";
+import AdminTrackers from "./pages/admin/Trackers";
 
 // Parent pages
 import ParentLogin from "./pages/parent/Login";
@@ -160,6 +161,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requireAdmin>
                     <Layout><AdminAttendance /></Layout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/trackers"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <Layout><AdminTrackers /></Layout>
                   </ProtectedRoute>
                 }
               />

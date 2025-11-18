@@ -59,6 +59,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { path: '/admin/parents', label: 'أولياء الأمور', icon: Users },
     { path: '/admin/students', label: 'الطلاب', icon: GraduationCap },
     { path: '/admin/attendance', label: 'الحضور', icon: UserCheck },
+    { path: '/admin/trackers', label: 'أجهزة التتبع', icon: MapPin },
     { path: '/admin/live-tracking', label: 'التتبع اللحظي', icon: MapPin },
     // { path: '/cameras', label: t('nav.cameras'), icon: Camera },
     // { path: '/saved-images', label: t('nav.savedImages'), icon: Images },

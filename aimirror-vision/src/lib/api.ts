@@ -209,6 +209,11 @@ export const updateTracker = async (id: number, data: any) => {
   return response.data;
 };
 
+export const deleteTracker = async (id: number) => {
+  const response = await api.delete(`/api/admin/trackers/${id}`);
+  return response.data;
+};
+
 // Admin APIs - Settings
 export const getSettings = async () => {
   const response = await api.get('/api/admin/settings');

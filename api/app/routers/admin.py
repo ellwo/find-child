@@ -646,6 +646,33 @@ async def update_tracker(
     return tracker
 
 
+@router.delete("/trackers/{tracker_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tracker(
+    tracker_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin)
+):
+    """Delete GPS tracker."""
+    tracker = crud.get_gps_tracker_by_id(db, tracker_id)
+    if not tracker:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="GPS tracker not found"
+        )
+    
+    # Check if tracker is assigned to any bus
+    bus = db.query(models.Bus).filter(models.Bus.gps_tracker_id == tracker_id).first()
+    if bus:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete tracker: It is assigned to bus {bus.bus_number}"
+        )
+    
+    db.delete(tracker)
+    db.commit()
+    return None
+
+
 # System Settings
 @router.get("/settings", response_model=schemas.SystemSettingsResponse)
 async def get_settings(
