@@ -402,9 +402,9 @@ def main():
     
     # Step 5: Upload Camera Image with Location
     print_section("STEP 5: Upload Camera Image with Location")
-    camera_image = TEST_IMAGES_DIR / "image.png"
+    camera_image = TEST_IMAGES_DIR / "1.png"
     if not camera_image.exists():
-        camera_image = Path(__file__).parent / "tests-images" / "image.png"
+        camera_image = Path(__file__).parent / "tests-images" / "1.png"
     
     if camera_image.exists():
         upload_camera_image(
