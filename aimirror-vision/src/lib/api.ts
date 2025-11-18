@@ -18,12 +18,22 @@ api.interceptors.request.use((config) => {
 });
 
 // Handle 401 errors (unauthorized)
+let isRedirecting = false;
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      window.location.href = '/';
+      // Only redirect if we're not already on the home page and not already redirecting
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/' && !isRedirecting) {
+        isRedirecting = true;
+        // Use setTimeout to prevent multiple redirects
+        setTimeout(() => {
+          window.location.href = '/';
+          isRedirecting = false;
+        }, 100);
+      }
     }
     return Promise.reject(error);
   }
@@ -31,9 +41,14 @@ api.interceptors.response.use(
 
 // Authentication APIs
 export const login = async (username: string, password: string) => {
-  const response = await api.post('/api/auth/login', {
-    username,
-    password,
+  // OAuth2PasswordRequestForm expects form data, not JSON
+  const formData = new URLSearchParams();
+  formData.append('username', username);
+  formData.append('password', password);
+  const response = await api.post('/api/auth/login', formData, {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
   });
   return response.data;
 };
@@ -236,5 +251,61 @@ export const searchByImage = async (formData: FormData) => {
       'Content-Type': 'multipart/form-data',
     },
   });
+  return response.data;
+};
+
+// Missing Report APIs (Public)
+export const createMissingReport = async (formData: FormData) => {
+  const response = await api.post('/api/reports/create', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+export const trackReport = async (phone: string, reportNumber: string) => {
+  const response = await api.post('/api/reports/track', {
+    phone,
+    report_number: reportNumber,
+  });
+  return response.data;
+};
+
+export const closeReport = async (reportNumber: string, phone: string) => {
+  const formData = new FormData();
+  formData.append('phone', phone);
+  const response = await api.post(`/api/reports/${reportNumber}/close`, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+// Admin Report APIs (SystemUser Only)
+export const getAllReports = async (params?: {
+  page?: number;
+  page_size?: number;
+  status_filter?: string;
+}) => {
+  const response = await api.get('/api/admin/reports', { params });
+  return response.data;
+};
+
+export const getReport = async (reportId: number) => {
+  const response = await api.get(`/api/admin/reports/${reportId}`);
+  return response.data;
+};
+
+export const updateReportStatus = async (reportId: number, status: string) => {
+  const response = await api.put(`/api/admin/reports/${reportId}/status`, {
+    status,
+  });
+  return response.data;
+};
+
+export const getReportMatches = async (reportId: number) => {
+  const response = await api.get(`/api/admin/reports/${reportId}/matches`);
   return response.data;
 };

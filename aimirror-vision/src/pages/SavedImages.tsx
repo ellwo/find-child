@@ -35,6 +35,7 @@ const SavedImages: React.FC = () => {
         end_date: appliedFilters.end_date,
         camera_ids: appliedFilters.camera_ids === 'all' ? '' : appliedFilters.camera_ids,
       }),
+    retry: false,
   });
 
   const applyFilters = () => {

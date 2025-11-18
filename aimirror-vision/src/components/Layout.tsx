@@ -11,6 +11,8 @@ import {
   Sun,
   Moon,
   Languages,
+  AlertCircle,
+  FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +25,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const isRTL = i18n.language === 'ar';
+  const token = localStorage.getItem('token');
+  const isAuthenticated = !!token;
 
   useEffect(() => {
     document.documentElement.setAttribute('dir', isRTL ? 'rtl' : 'ltr');
@@ -32,11 +36,25 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     i18n.changeLanguage(i18n.language === 'ar' ? 'en' : 'ar');
   };
 
-  const navItems = [
+  // Public navigation items (always visible)
+  const publicNavItems = [
     { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
+    { path: '/search', label: t('nav.search'), icon: Search },
+    { path: '/report', label: t('nav.reportMissing'), icon: AlertCircle },
+    { path: '/track', label: t('nav.trackReport'), icon: FileText },
+  ];
+
+  // Protected navigation items (only visible when authenticated)
+  const protectedNavItems = [
     { path: '/cameras', label: t('nav.cameras'), icon: Camera },
     { path: '/saved-images', label: t('nav.savedImages'), icon: Images },
-    { path: '/search', label: t('nav.search'), icon: Search },
+    { path: '/admin/reports', label: t('nav.adminReports'), icon: FileText },
+  ];
+
+  // Combine navigation items based on authentication
+  const navItems = [
+    ...publicNavItems,
+    ...(isAuthenticated ? protectedNavItems : []),
   ];
 
   return (

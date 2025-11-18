@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, Header, status, BackgroundTasks
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 from app import crud, models, schemas
 from app.db import get_db, engine
 from app.compreface_client import index_face, search_face, compare_faces, detect_face
+from app.auth import authenticate_user, create_access_token, get_current_user, get_current_system_user
 from app.utils import (
     save_face_image, get_image_url, parse_date, get_today_utc,
     parse_iso_datetime, get_storage_path
@@ -26,12 +28,16 @@ load_dotenv()
 # Initialize database tables
 models.Base.metadata.create_all(bind=engine)
 
-# Create FastAPI app
+# Create FastAPI app with increased max request size
 app = FastAPI(
     title="Face Recognition API",
     description="API for ESP32-CAM face uploads, CompreFace integration, and image search",
     version="1.0.0"
 )
+
+# Note: Max request size is controlled by uvicorn/Starlette
+# Default is 1MB, but we can handle larger files by reading them in chunks
+# The actual limit is set in uvicorn command line or via environment variable
 
 # Configure CORS
 app.add_middleware(
@@ -41,6 +47,8 @@ app.add_middleware(
         "http://127.0.0.1:8080",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost:8002",
+        "http://127.0.0.1:8002",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -116,12 +124,84 @@ async def health_check(db: Session = Depends(get_db)):
     return health_status
 
 
+def compare_with_reports_background(
+    captured_image: models.CapturedImage,
+    compreface_face_id: str
+):
+    """
+    Background job to compare captured image with in-progress reports.
+    """
+    from app.db import SessionLocal
+    from app.external_api import notify_external_api
+    
+    db = SessionLocal()
+    try:
+        # Get all open and in-progress reports (reports that are active)
+        open_reports = crud.get_open_reports(db)
+        in_progress_reports = crud.get_in_progress_reports(db)
+        reports = open_reports + in_progress_reports
+        
+        if not reports:
+            print("No active reports to compare with")
+            return
+        
+        print(f"Comparing image {captured_image.id} with {len(reports)} in-progress reports...")
+        
+        # Compare with each report
+        for report in reports:
+            if not report.child_compreface_face_id:
+                continue
+            
+            try:
+                # Compare faces using CompreFace
+                full_file_path = Path(get_storage_path()) / captured_image.file_path
+                child_photo_path = Path(get_storage_path()) / report.child_photo_path
+                
+                if not full_file_path.exists() or not child_photo_path.exists():
+                    continue
+                
+                similarity = compare_faces(str(full_file_path), str(child_photo_path))
+                
+                # If similarity > 0.88, create a match
+                if similarity > 0.88:
+                    print(f"Match found! Report {report.report_number} - Similarity: {similarity:.2%}")
+                    
+                    # Create report match
+                    match = crud.create_report_match(
+                        db=db,
+                        report_id=report.id,
+                        captured_image_id=captured_image.id,
+                        similarity_score=similarity,
+                        camera_id=captured_image.camera_id,
+                        camera_name=captured_image.camera_name
+                    )
+                    
+                    # Notify external API in background
+                    try:
+                        notify_external_api(report, captured_image, similarity, match.id)
+                    except Exception as e:
+                        print(f"Error notifying external API: {str(e)}")
+                        
+            except Exception as e:
+                print(f"Error comparing with report {report.report_number}: {str(e)}")
+                continue
+                
+    except Exception as e:
+        print(f"Error in compare_with_reports_background: {str(e)}")
+    finally:
+        db.close()
+
+
 def process_image_background(
     image_data: bytes,
     camera_id: str,
     camera_name: Optional[str],
     parsed_timestamp: datetime,
-    temp_file_path: str
+    temp_file_path: str,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    place_name: Optional[str] = None,
+    description: Optional[str] = None
 ):
     """
     Background job to process uploaded image:
@@ -181,7 +261,11 @@ def process_image_background(
                 camera_name=camera_name,
                 timestamp=parsed_timestamp,
                 file_path=file_path,
-                compreface_face_id=None
+                compreface_face_id=None,
+                latitude=latitude,
+                longitude=longitude,
+                place_name=place_name,
+                description=description
             )
         except Exception as e:
             print(f"Error creating captured image record: {str(e)}")
@@ -199,6 +283,10 @@ def process_image_background(
             # Update the record with compreface_face_id
             crud.update_captured_image_compreface_id(db, captured_image.id, compreface_face_id)
             print(f"Successfully indexed face with ID: {compreface_face_id}")
+            
+            # Compare with reports in background
+            if compreface_face_id:
+                compare_with_reports_background(captured_image, compreface_face_id)
         except Exception as e:
             # Log error but don't fail - image is saved
             print(f"Warning: Failed to index face in CompreFace: {str(e)}")
@@ -222,6 +310,10 @@ async def upload_camera_face(
     camera_name: Optional[str] = Form(None),
     timestamp: Optional[str] = Form(None),
     image: UploadFile = File(...),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
+    place_name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
     x_api_key: str = Header(..., alias="X-API-KEY"),
     db: Session = Depends(get_db)
 ):
@@ -278,7 +370,11 @@ async def upload_camera_face(
         camera_id=camera_id,
         camera_name=camera_name,
         parsed_timestamp=parsed_timestamp,
-        temp_file_path=temp_file_path
+        temp_file_path=temp_file_path,
+        latitude=latitude,
+        longitude=longitude,
+        place_name=place_name,
+        description=description
     )
     
     # Return immediate response (processing happens in background)
@@ -453,7 +549,8 @@ async def get_saved_images(
     camera_ids: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_system_user)
 ):
     """
     Get paginated list of saved face images with optional filters.
@@ -518,7 +615,11 @@ async def get_saved_images(
             camera_name=img.camera_name,
             timestamp=img.timestamp,
             image_url=get_image_url(img.file_path),
-            compreface_face_id=img.compreface_face_id
+            compreface_face_id=img.compreface_face_id,
+            latitude=img.latitude,
+            longitude=img.longitude,
+            place_name=img.place_name,
+            description=img.description
         ))
     
     total_pages = (total + page_size - 1) // page_size
@@ -547,6 +648,403 @@ async def get_cameras(db: Session = Depends(get_db)):
         )
         for cam in cameras
     ]
+
+
+# Authentication Endpoints
+@app.post("/api/auth/login", response_model=schemas.Token)
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    """Login endpoint - returns JWT token."""
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": user.username})
+    return schemas.Token(access_token=access_token, token_type="bearer")
+
+
+@app.get("/api/auth/me", response_model=schemas.UserResponse)
+async def get_current_user_info(
+    current_user: models.User = Depends(get_current_user)
+):
+    """Get current user information."""
+    return current_user
+
+
+@app.post("/api/auth/refresh", response_model=schemas.Token)
+async def refresh_token(
+    current_user: models.User = Depends(get_current_user)
+):
+    """Refresh access token."""
+    access_token = create_access_token(data={"sub": current_user.username})
+    return schemas.Token(access_token=access_token, token_type="bearer")
+
+
+# Missing Report Endpoints (Public)
+@app.post("/api/reports/create", response_model=schemas.MissingReportResponse)
+async def create_missing_report(
+    reporter_name: str = Form(...),
+    reporter_email: str = Form(...),
+    reporter_phone: str = Form(...),
+    child_name: str = Form(...),
+    child_photo: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Create a new missing report. Public endpoint - no auth required."""
+    # Validate image file
+    if not child_photo.content_type or not child_photo.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be an image"
+        )
+    
+    # Read image data
+    image_data = await child_photo.read()
+    if len(image_data) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file is empty"
+        )
+    
+    # Save image temporarily for face detection
+    temp_file_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+            tmp_file.write(image_data)
+            temp_file_path = tmp_file.name
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save temporary image: {str(e)}"
+        )
+    
+    # Check if image contains a face
+    has_face = False
+    try:
+        has_face = detect_face(temp_file_path)
+    except Exception as e:
+        print(f"Error detecting face: {str(e)}")
+        has_face = False
+    
+    if not has_face:
+        # Clean up temp file
+        try:
+            os.unlink(temp_file_path)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image must contain a face"
+        )
+    
+    # Save child photo
+    try:
+        photo_path = save_face_image(image_data, "reports", datetime.utcnow())
+        full_photo_path = Path(get_storage_path()) / photo_path
+    except Exception as e:
+        try:
+            os.unlink(temp_file_path)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save image: {str(e)}"
+        )
+    
+    # Index face in CompreFace
+    compreface_face_id = None
+    try:
+        compreface_face_id = index_face(str(full_photo_path))
+    except Exception as e:
+        print(f"Warning: Failed to index face in CompreFace: {str(e)}")
+    
+    # Create report
+    try:
+        report = crud.create_missing_report(
+            db=db,
+            reporter_name=reporter_name,
+            reporter_email=reporter_email,
+            reporter_phone=reporter_phone,
+            child_name=child_name,
+            child_photo_path=photo_path,
+            child_compreface_face_id=compreface_face_id
+        )
+    except Exception as e:
+        # Clean up saved file
+        try:
+            os.unlink(full_photo_path)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create report: {str(e)}"
+        )
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(temp_file_path)
+        except Exception:
+            pass
+    
+    return schemas.MissingReportResponse(
+        id=report.id,
+        report_number=report.report_number,
+        reporter_name=report.reporter_name,
+        reporter_email=report.reporter_email,
+        reporter_phone=report.reporter_phone,
+        child_name=report.child_name,
+        child_photo_url=get_image_url(report.child_photo_path),
+        status=report.status.value,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+        closed_at=report.closed_at
+    )
+
+
+@app.post("/api/reports/track", response_model=schemas.ReportTrackResponse)
+async def track_report(
+    track_request: schemas.ReportTrackRequest,
+    db: Session = Depends(get_db)
+):
+    """Track a report by phone and report number. Public endpoint."""
+    report = crud.get_missing_report_by_phone_and_number(
+        db, track_request.phone, track_request.report_number
+    )
+    
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found or phone number does not match"
+        )
+    
+    # Get matches
+    matches = crud.get_report_matches(db, report.id)
+    match_responses = []
+    for match in matches:
+        captured_image = crud.get_image_by_id(db, match.captured_image_id)
+        if captured_image:
+            match_responses.append(schemas.ReportMatchResponse(
+                id=match.id,
+                report_id=match.report_id,
+                captured_image_id=match.captured_image_id,
+                similarity_score=match.similarity_score,
+                camera_id=match.camera_id,
+                camera_name=match.camera_name,
+                matched_at=match.matched_at,
+                image_url=get_image_url(captured_image.file_path)
+            ))
+    
+    return schemas.ReportTrackResponse(
+        report=schemas.MissingReportResponse(
+            id=report.id,
+            report_number=report.report_number,
+            reporter_name=report.reporter_name,
+            reporter_email=report.reporter_email,
+            reporter_phone=report.reporter_phone,
+            child_name=report.child_name,
+            child_photo_url=get_image_url(report.child_photo_path),
+            status=report.status.value,
+            created_at=report.created_at,
+            updated_at=report.updated_at,
+            closed_at=report.closed_at
+        ),
+        matches=match_responses
+    )
+
+
+@app.post("/api/reports/{report_number}/close")
+async def close_report_by_number(
+    report_number: str,
+    phone: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Close a report by report number and phone. Public endpoint."""
+    report = crud.get_missing_report_by_phone_and_number(db, phone, report_number)
+    
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found or phone number does not match"
+        )
+    
+    if report.status == models.ReportStatus.CLOSED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Report is already closed"
+        )
+    
+    crud.close_report(db, report.id)
+    
+    return {"message": "Report closed successfully", "report_number": report_number}
+
+
+# Admin Report Endpoints (SystemUser Only)
+@app.get("/api/admin/reports", response_model=schemas.ReportListResponse)
+async def get_all_reports_admin(
+    page: int = 1,
+    page_size: int = 20,
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_system_user)
+):
+    """Get all reports with pagination. SystemUser only."""
+    if page < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Page must be >= 1"
+        )
+    
+    if page_size < 1 or page_size > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Page size must be between 1 and 100"
+        )
+    
+    # Parse status filter
+    status_enum = None
+    if status_filter:
+        try:
+            status_enum = models.ReportStatus(status_filter)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}"
+            )
+    
+    skip = (page - 1) * page_size
+    reports, total = crud.get_all_reports(db, skip=skip, limit=page_size, status=status_enum)
+    
+    items = []
+    for report in reports:
+        items.append(schemas.MissingReportResponse(
+            id=report.id,
+            report_number=report.report_number,
+            reporter_name=report.reporter_name,
+            reporter_email=report.reporter_email,
+            reporter_phone=report.reporter_phone,
+            child_name=report.child_name,
+            child_photo_url=get_image_url(report.child_photo_path),
+            status=report.status.value,
+            created_at=report.created_at,
+            updated_at=report.updated_at,
+            closed_at=report.closed_at
+        ))
+    
+    total_pages = (total + page_size - 1) // page_size
+    
+    return schemas.ReportListResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+        items=items
+    )
+
+
+@app.get("/api/admin/reports/{report_id}", response_model=schemas.MissingReportResponse)
+async def get_report_by_id_admin(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_system_user)
+):
+    """Get report by ID. SystemUser only."""
+    report = crud.get_report_by_id(db, report_id)
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    return schemas.MissingReportResponse(
+        id=report.id,
+        report_number=report.report_number,
+        reporter_name=report.reporter_name,
+        reporter_email=report.reporter_email,
+        reporter_phone=report.reporter_phone,
+        child_name=report.child_name,
+        child_photo_url=get_image_url(report.child_photo_path),
+        status=report.status.value,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+        closed_at=report.closed_at
+    )
+
+
+@app.put("/api/admin/reports/{report_id}/status", response_model=schemas.MissingReportResponse)
+async def update_report_status_admin(
+    report_id: int,
+    status_update: schemas.ReportStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_system_user)
+):
+    """Update report status. SystemUser only."""
+    try:
+        new_status = models.ReportStatus(status_update.status)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status: {status_update.status}"
+        )
+    
+    report = crud.update_report_status(db, report_id, new_status)
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    return schemas.MissingReportResponse(
+        id=report.id,
+        report_number=report.report_number,
+        reporter_name=report.reporter_name,
+        reporter_email=report.reporter_email,
+        reporter_phone=report.reporter_phone,
+        child_name=report.child_name,
+        child_photo_url=get_image_url(report.child_photo_path),
+        status=report.status.value,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+        closed_at=report.closed_at
+    )
+
+
+@app.get("/api/admin/reports/{report_id}/matches", response_model=List[schemas.ReportMatchResponse])
+async def get_report_matches_admin(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_system_user)
+):
+    """Get all matches for a report. SystemUser only."""
+    report = crud.get_report_by_id(db, report_id)
+    if not report:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found"
+        )
+    
+    matches = crud.get_report_matches(db, report_id)
+    match_responses = []
+    for match in matches:
+        captured_image = crud.get_image_by_id(db, match.captured_image_id)
+        if captured_image:
+            match_responses.append(schemas.ReportMatchResponse(
+                id=match.id,
+                report_id=match.report_id,
+                captured_image_id=match.captured_image_id,
+                similarity_score=match.similarity_score,
+                camera_id=match.camera_id,
+                camera_name=match.camera_name,
+                matched_at=match.matched_at,
+                image_url=get_image_url(captured_image.file_path)
+            ))
+    
+    return match_responses
 
 
 if __name__ == "__main__":
